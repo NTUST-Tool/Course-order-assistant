@@ -15,7 +15,7 @@ use tabled::{
 };
 
 #[derive(Parser, Debug)]
-#[command(author, about = "台灣科技大學\n選課志願序推薦系統", long_about)]
+#[command(author, about = "台灣科技大學\n選課志願序小幫手", long_about)]
 struct Args {
     file_path: String,
 }

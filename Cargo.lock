@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "Course-order-suggestion-system"
+name = "Course-order-assistant"
 version = "1.0.0"
 dependencies = [
  "clap",

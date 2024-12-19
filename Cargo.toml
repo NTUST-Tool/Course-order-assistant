@@ -1,11 +1,11 @@
 [package]
-name = "Course-order-suggestion-system"
-description = "A course order suggestion system for NTUST"
+name = "Course-order-assistant"
+description = "A course order assistant for NTUST"
 version = "1.0.0"
 edition = "2021"
 
 [package.metadata.winresource]
-OriginalFilename = "選課志願序推薦系統.exe"
+OriginalFilename = "選課志願序小幫手.exe"
 LegalCopyright = "Copyright © 2024 NTUST-Tool"
 
 
@@ -22,5 +22,5 @@ tabled = "0.17.0"
 regex = "1.11.1"
 
 [[bin]]
-name = "Course-order-suggestion"
+name = "Course-order-assistant"
 path = "src/main.rs"

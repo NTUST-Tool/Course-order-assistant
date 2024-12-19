@@ -40,6 +40,6 @@ jobs:
         with:
           name: ${{ matrix.os }} Build
           path: |
-            target/x86_64-unknown-linux-musl/release/Course-order-suggestion
-            target/release/Course-order-suggestion
-            target/release/Course-order-suggestion.exe
+            target/x86_64-unknown-linux-musl/release/Course-order-assistant
+            target/release/Course-order-assistant
+            target/release/Course-order-assistant.exe
