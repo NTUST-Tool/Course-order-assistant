@@ -1,14 +1,13 @@
 name: "CI"
 on:
   push:
-  pull_request:
 
 jobs:
   build:
     name: build ${{ matrix.os }} app
     strategy:
       matrix:
-        os: [macos-latest, macos-13, ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-13, windows-latest]
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -34,12 +33,78 @@ jobs:
           sudo apt install -y musl-tools
           cargo build --release --target x86_64-unknown-linux-musl
 
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }} Build
+          name: ${{ matrix.os }}-Build
           path: |
             target/x86_64-unknown-linux-musl/release/Course-order-assistant
             target/release/Course-order-assistant
             target/release/Course-order-assistant.exe
+
+  update-release:
+    name: Update Latest Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Get latest release
+        id: get_latest_release
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const releases = await github.rest.repos.listReleases({ owner, repo });
+            if (releases.data.length === 0) {
+              core.setFailed('No releases found to update.');
+              return;
+            }
+            const latestRelease = releases.data[0];
+            core.setOutput('release_id', latestRelease.id);
+            core.setOutput('upload_url', latestRelease.upload_url);
+            core.setOutput('release_tag', latestRelease.tag_name)
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: move files
+        run: |
+          mkdir release-assets
+          mv macos-latest-Build/release/Course-order-assistant release-assets/Course-order-assistant.arm64
+          mv macos-13-Build/release/Course-order-assistant release-assets/Course-order-assistant.amd64
+          mv ubuntu-latest-Build/x86_64-unknown-linux-musl/release/Course-order-assistant release-assets/Course-order-assistant
+          mv windows-latest-Build/release/Course-order-assistant.exe release-assets/Course-order-assistant.exe
+
+      - name: Display structure of downloaded files
+        run: ls -R
+
+      - name: Delete existing release assets
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const release_id = ${{ steps.get_latest_release.outputs.release_id }};
+            const assets = await github.rest.repos.listReleaseAssets({
+                owner,
+                repo,
+                release_id
+            });
+            for (const asset of assets.data) {
+                console.log(`Deleting asset ${asset.name}`);
+                await github.rest.repos.deleteReleaseAsset({
+                    owner,
+                    repo,
+                    asset_id: asset.id
+                });
+            }
+
+      - name: Upload Release Asset macos-latest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_latest_release.outputs.release_tag }}
+          files: |
+            release-assets/Course-order-assistant
+            release-assets/Course-order-assistant.exe
+            release-assets/Course-order-assistant.amd64
+            release-assets/Course-order-assistant.arm64
