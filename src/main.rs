@@ -89,6 +89,9 @@ async fn get_course_info(
     });
     let res = client.post(url).json(&body).send().await?;
     let json_array = res.json::<Value>().await?;
+    if json_array.as_array().unwrap().is_empty() {
+        return Err(course_id)?;
+    }
     let json_object = &json_array[0];
     let mut data = from_value::<Course>(json_object.clone()).unwrap();
 
