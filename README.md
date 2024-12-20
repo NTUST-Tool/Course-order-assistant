@@ -22,6 +22,15 @@
 
 --- 
 ## FAQ
-若無法執行，顯示以下畫面，請安裝[ Visual C++ 可轉散發套件](https://aka.ms/vs/17/release/vc_redist.x64.exe)
-  
-![image](https://github.com/NTUST-Tool/Course-order-assistant/assets/54392299/38e3993f-21f2-4d23-bb7b-dfee35d1e9d8)
+1. 若無法執行，顯示以下畫面，請安裝[ Visual C++ 可轉散發套件](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+
+> ![image](https://github.com/NTUST-Tool/Course-order-assistant/assets/54392299/38e3993f-21f2-4d23-bb7b-dfee35d1e9d8)
+
+2. Windows 已保護您的電腦
+   
+> 按照以下步驟即可正常執行
+> 
+> ![image](https://github.com/user-attachments/assets/42cbe323-0081-4ae4-b115-57734a4fb6f8)
+> 
+> ![image](https://github.com/user-attachments/assets/18d82ef8-04a5-410d-aabc-8014d50a942a)
+
