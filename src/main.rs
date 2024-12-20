@@ -1,8 +1,11 @@
 use clap::{CommandFactory, FromArgMatches, Parser};
+use futures::stream::{FuturesUnordered, StreamExt};
+use kdam::{tqdm, BarExt, Spinner};
 use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{from_value, json, Value};
+use std::error::Error;
 use std::io;
 use std::io::prelude::*;
 use std::process::exit;
