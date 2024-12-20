@@ -98,7 +98,7 @@ async fn get_course_info(
     let raw_choice_rate = data.student_count as f32 / (data.student_limit).parse::<f32>().unwrap();
 
     data.choice_rate = round_digits(raw_choice_rate, 2);
-
+    data.sucess_rate = 100.0;
     if data.choice_rate > 0.0 {
         data.sucess_rate = 100.0 / data.choice_rate;
         if data.sucess_rate > 100.0 {
