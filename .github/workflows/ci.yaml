@@ -1,6 +1,12 @@
 name: "CI"
 on:
   push:
+    paths:
+      - "src/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "resources/**"
 
 jobs:
   build:
