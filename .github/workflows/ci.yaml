@@ -7,6 +7,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "resources/**"
+      - ".github/workflows/ci.yaml"
 
 jobs:
   build:
