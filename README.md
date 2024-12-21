@@ -16,10 +16,11 @@
 ### 下載連結：
 | **Windows**                                                                                                    | **Linux**                                                                                                  | **MacOS Apple silicon**                                                                                          | **MacOS Intel Core**                                                                                             |
 |:--------------------------------------------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------------------------------:|
-| [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant.exe) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant.arm64) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant.amd64) |
+| [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant.exe) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant-linux.zip) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant-macos-arm64.zip) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant-macos-amd64.zip) |
 
 
-## windows使用方式如下：
+## 使用教學
+0. (非windows使用者) 解壓縮檔案
 1. 打開選課清單
 > ![image](https://github.com/NTUST-Tool/Course-order-assistant/assets/54392299/06ee9b2e-0bc5-46c4-a886-e62bfff529e1)
 2. 按下ctrl+S，存檔類型建議選擇純 HTML 
@@ -41,7 +42,7 @@
 
 --- 
 ## FAQ
-1. 若無法執行，顯示以下畫面，請安裝[ Visual C++ 可轉散發套件](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+1. 若windows無法執行，並顯示以下畫面，請安裝[ Visual C++ 可轉散發套件](https://aka.ms/vs/17/release/vc_redist.x64.exe)
 
 > ![image](https://github.com/NTUST-Tool/Course-order-assistant/assets/54392299/38e3993f-21f2-4d23-bb7b-dfee35d1e9d8)
 

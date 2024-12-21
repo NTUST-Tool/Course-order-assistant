@@ -74,13 +74,28 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
 
-      - name: move files
+      - name: prepare macos-latest arifacts
         run: |
           mkdir release-assets
-          mv macos-latest-Build/release/Course-order-assistant release-assets/Course-order-assistant.arm64
-          mv macos-13-Build/release/Course-order-assistant release-assets/Course-order-assistant.amd64
+          mv macos-latest-Build/release/Course-order-assistant ./Course-order-assistant
+          chmod +x Course-order-assistant
+          zip Course-order-assistant-macos-arm64.zip Course-order-assistant
+
+      - name: prepare macos-13 arifacts
+        run: |
+          mv macos-13-Build/release/Course-order-assistant ./Course-order-assistant
+          chmod +x Course-order-assistant
+          zip Course-order-assistant-macos-amd64.zip Course-order-assistant
+
+      - name: prepare linux arifacts
+        run: |
           mv ubuntu-latest-Build/x86_64-unknown-linux-musl/release/Course-order-assistant release-assets/Course-order-assistant
-          mv windows-latest-Build/release/Course-order-assistant.exe release-assets/Course-order-assistant.exe
+          chmod +x Course-order-assistant
+          zip Course-order-assistant-linux.zip Course-order-assistant
+
+      - name: prepare windows arifacts
+        run: |
+          mv windows-latest-Build/release/Course-order-assistant.exe ./Course-order-assistant.exe
 
       - name: Display structure of downloaded files
         run: ls -R
@@ -110,7 +125,7 @@ jobs:
         with:
           tag_name: ${{ steps.get_latest_release.outputs.release_tag }}
           files: |
-            release-assets/Course-order-assistant
-            release-assets/Course-order-assistant.exe
-            release-assets/Course-order-assistant.amd64
-            release-assets/Course-order-assistant.arm64
+            Course-order-assistant-macos-arm64.zip
+            Course-order-assistant-macos-amd64.zip
+            Course-order-assistant-linux.zip
+            Course-order-assistant.exe
