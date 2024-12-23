@@ -3,6 +3,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use kdam::{tqdm, BarExt, Spinner};
 use regex::Regex;
 use reqwest::Client;
+use scraper::{Html, Selector};
 use serde::Deserialize;
 use serde_json::{from_value, json, Value};
 use std::error::Error;
@@ -16,6 +17,7 @@ use tabled::{
     },
     Table, Tabled,
 };
+
 #[derive(Parser, Debug)]
 #[command(author, about = "台灣科技大學\n選課志願序小幫手", long_about)]
 struct Args {
@@ -88,6 +90,28 @@ fn get_path() -> String {
     }
     let path = args.unwrap().file_path;
     return path;
+}
+
+fn extract_table_content(file_path: &str) -> String {
+    let file_content = std::fs::read_to_string(file_path).wrap_or_exit("檔案開啟失敗");
+    let document = Html::parse_document(&file_content);
+    let selector = Selector::parse("#cartTable").wrap_or_exit("無法解析Selector");
+
+    if let Some(table_element) = document.select(&selector).next() {
+        table_element.inner_html()
+    } else {
+        println!("未找到登記志願清單，請確認下載頁面是否正確。");
+        wait_exit_with_code(1);
+        String::new()
+    }
+}
+
+fn extract_course_ids(table_html: &str) -> Vec<String> {
+    let re = Regex::new(r"[A-Z]{2}[G|1-9]{1}[AB|0-9]{3}[0|1|3|5|7]{1}[0-9]{2}")
+        .wrap_or_exit("Regex 模板創建失敗");
+    re.find_iter(table_html)
+        .map(|m| m.as_str().to_string())
+        .collect()
 }
 
 fn wait_exit_with_code(code: i32) {
@@ -196,19 +220,17 @@ async fn fetch_all_courses(
 #[tokio::main]
 async fn main() {
     let file_path = get_path();
-    let file = std::fs::read_to_string(&file_path).wrap_or_exit("檔案開啟失敗");
 
-    let re = Regex::new(r"[A-Z]{2}[G|1-9]{1}[AB|0-9]{3}[0|1|3|5|7]{1}[0-9]{2}")
-        .wrap_or_exit("Regex 模板創建失敗");
+    let table_html = extract_table_content(&file_path);
 
-    let course_ids: Vec<_> = re.find_iter(&file).map(|m| m.as_str()).collect();
+    let course_ids: Vec<_> = extract_course_ids(&table_html);
 
     let client = Client::new();
 
     let semester = get_semester(&client).await.wrap_or_exit("無法取得學期資訊");
 
     let (mut safe_courses, mut unsafe_courses, unknown_courses) =
-        fetch_all_courses(course_ids, &client, &semester).await;
+        fetch_all_courses(course_ids.iter().map(|s| s.as_str()).collect(), &client, &semester).await;
 
     for course in unknown_courses {
         eprint!("\n警告: 查無課程資料，課程代碼: {}", course);
