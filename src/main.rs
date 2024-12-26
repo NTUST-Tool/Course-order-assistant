@@ -3,6 +3,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use kdam::{tqdm, BarExt, Spinner};
 use regex::Regex;
 use reqwest::Client;
+use scraper::{Html, Selector};
 use serde::Deserialize;
 use serde_json::{from_value, json, Value};
 use std::error::Error;
@@ -16,6 +17,7 @@ use tabled::{
     },
     Table, Tabled,
 };
+
 #[derive(Parser, Debug)]
 #[command(author, about = "台灣科技大學\n選課志願序小幫手", long_about)]
 struct Args {
@@ -88,6 +90,25 @@ fn get_path() -> String {
     }
     let path = args.unwrap().file_path;
     return path;
+}
+
+fn extract_course_ids(file_content: &str) -> Vec<String> {
+    let re = Regex::new(r"[A-Z]{2}[G|1-9]{1}[AB|0-9]{3}[0|1|3|5|7]{1}[0-9]{2}")
+        .expect("Regex 模板創建失敗");
+
+    let document = Html::parse_document(file_content);
+    let selector = Selector::parse("#cartTable").expect("無法解析選擇器");
+
+    if let Some(table_element) = document.select(&selector).next() {
+        let table_html = table_element.inner_html();
+        re.find_iter(&table_html)
+            .map(|m| m.as_str().to_string())
+            .collect()
+    } else {
+        re.find_iter(file_content)
+            .map(|m| m.as_str().to_string())
+            .collect()
+    }
 }
 
 fn wait_exit_with_code(code: i32) {
@@ -196,19 +217,16 @@ async fn fetch_all_courses(
 #[tokio::main]
 async fn main() {
     let file_path = get_path();
-    let file = std::fs::read_to_string(&file_path).wrap_or_exit("檔案開啟失敗");
+    let file_content = std::fs::read_to_string(&file_path).wrap_or_exit("檔案開啟失敗");
 
-    let re = Regex::new(r"[A-Z]{2}[G|1-9]{1}[AB|0-9]{3}[0|1|3|5|7]{1}[0-9]{2}")
-        .wrap_or_exit("Regex 模板創建失敗");
-
-    let course_ids: Vec<_> = re.find_iter(&file).map(|m| m.as_str()).collect();
+    let course_ids: Vec<_> = extract_course_ids(&file_content);
 
     let client = Client::new();
 
     let semester = get_semester(&client).await.wrap_or_exit("無法取得學期資訊");
 
     let (mut safe_courses, mut unsafe_courses, unknown_courses) =
-        fetch_all_courses(course_ids, &client, &semester).await;
+        fetch_all_courses(course_ids.iter().map(|s| s.as_str()).collect(), &client, &semester).await;
 
     for course in unknown_courses {
         eprint!("\n警告: 查無課程資料，課程代碼: {}", course);
