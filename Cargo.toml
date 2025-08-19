@@ -22,7 +22,7 @@ tabled = "0.20.0"
 regex = "1.11.1"
 kdam = { version = "0.6.1", features = ["spinner", "template"] }
 futures = "0.3.31"
-scraper = "0.23.1"
+scraper = "0.24.0"
 anyhow = "1.0.98"
 
 [[bin]]
