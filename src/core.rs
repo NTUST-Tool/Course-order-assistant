@@ -12,18 +12,38 @@ pub struct Course {
     #[serde(alias = "CourseNo")]
     #[tabled(rename = "課程代碼")]
     pub course_id: String,
+    #[serde(alias = "CourseName")]
+    #[tabled(rename = "課程名稱")]
+    pub course_name: String,
+    #[serde(alias = "CourseTeacher")]
+    #[tabled(rename = "授課老師")]
+    pub course_teacher: String,
+    #[serde(alias = "Credit", alias = "Credits", alias = "CreditHours", alias = "CourseCredit")]
+    #[serde(default)]
+    #[tabled(rename = "學分")]
+    pub credit: String,
+    #[serde(alias = "RequiredElective", alias = "CourseType", alias = "Required", alias = "Compulsory", alias = "Restrict1")]
+    #[serde(default)]
+    #[tabled(rename = "選必")]
+    pub required_elective: String,
+    #[serde(alias = "Duration", alias = "SemesterType", alias = "Period", alias = "FullHalf", alias = "SemesterPart")]
+    #[serde(default)]
+    #[tabled(rename = "全半")]
+    pub full_half: String,
+    #[serde(alias = "CourseTime", alias = "ClassTime", alias = "Schedule", alias = "TimeSlot", alias = "Time")]
+    #[serde(default)]
+    #[tabled(rename = "上課時間")]
+    pub class_time: String,
+    #[serde(alias = "ClassRoom", alias = "Room", alias = "Location", alias = "Classroom", alias = "Place")]
+    #[serde(default)]
+    #[tabled(rename = "教室")]
+    pub classroom: String,
     #[serde(alias = "AllStudent")]
     #[tabled(rename = "選課人數")]
     pub student_count: i32,
     #[serde(alias = "Restrict2")]
     #[tabled(rename = "人數上限")]
     pub student_limit: String,
-    #[serde(alias = "CourseTeacher")]
-    #[tabled(rename = "授課老師")]
-    pub course_teacher: String,
-    #[serde(alias = "CourseName")]
-    #[tabled(rename = "課程名稱")]
-    pub course_name: String,
     #[serde(default)]
     #[tabled(rename = "選上機率(%)")]
     pub sucess_rate: f32,
@@ -132,5 +152,91 @@ pub fn extract_course_ids(file_content: &str) -> Vec<String> {
         re.find_iter(file_content)
             .map(|m| m.as_str().to_string())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tabled::Table;
+
+    #[test]
+    fn test_course_struct_and_table() {
+        // Create a sample course with all new fields
+        let course = Course {
+            course_id: "CS100101".to_string(),
+            course_name: "計算機概論".to_string(),
+            course_teacher: "王教授".to_string(),
+            credit: "3".to_string(),
+            required_elective: "必修".to_string(),
+            full_half: "全".to_string(),
+            class_time: "一234".to_string(),
+            classroom: "TR-101".to_string(),
+            student_count: 50,
+            student_limit: "60".to_string(),
+            sucess_rate: 83.33,
+            choice_rate: 1.2,
+        };
+
+        // Test that we can create a table with the new structure
+        let courses = vec![course];
+        let table = Table::new(&courses);
+        let table_string = table.to_string();
+        
+        // Verify that all the new fields appear in the table
+        assert!(table_string.contains("課程代碼"));
+        assert!(table_string.contains("課程名稱"));
+        assert!(table_string.contains("授課老師"));
+        assert!(table_string.contains("學分"));
+        assert!(table_string.contains("選必"));
+        assert!(table_string.contains("全半"));
+        assert!(table_string.contains("上課時間"));
+        assert!(table_string.contains("教室"));
+        assert!(table_string.contains("選課人數"));
+        assert!(table_string.contains("人數上限"));
+        assert!(table_string.contains("選上機率"));
+        assert!(table_string.contains("選課比例"));
+        
+        // Verify that the data appears in the table
+        assert!(table_string.contains("CS100101"));
+        assert!(table_string.contains("計算機概論"));
+        assert!(table_string.contains("王教授"));
+        assert!(table_string.contains("必修"));
+        assert!(table_string.contains("一234"));
+        assert!(table_string.contains("TR-101"));
+
+        println!("Generated table:\n{}", table_string);
+    }
+
+    #[test]
+    fn test_course_deserialization_with_missing_fields() {
+        use serde_json::{json, from_value};
+        
+        // Test that the Course struct can be deserialized even when new fields are missing
+        let json_data = json!({
+            "CourseNo": "CS100101",
+            "CourseName": "計算機概論",
+            "CourseTeacher": "王教授",
+            "AllStudent": 50,
+            "Restrict2": "60"
+            // Note: new fields are missing, should use defaults
+        });
+
+        let course: Result<Course, _> = from_value(json_data);
+        assert!(course.is_ok());
+        
+        let course = course.unwrap();
+        assert_eq!(course.course_id, "CS100101");
+        assert_eq!(course.course_name, "計算機概論");
+        assert_eq!(course.course_teacher, "王教授");
+        assert_eq!(course.student_count, 50);
+        assert_eq!(course.student_limit, "60");
+        
+        // New fields should be empty strings (default values)
+        assert_eq!(course.credit, "");
+        assert_eq!(course.required_elective, "");
+        assert_eq!(course.full_half, "");
+        assert_eq!(course.class_time, "");
+        assert_eq!(course.classroom, "");
     }
 }

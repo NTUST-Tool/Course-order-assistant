@@ -118,7 +118,7 @@ async fn main() {
         unsafe_part_table
             .with(Concat::vertical(safe_part_table))
             .with(Modify::new(Cell::new(len, 0)).with("以下課程皆會選上，無須考慮位置"))
-            .modify((len, 0), Span::column(7));
+            .modify((len, 0), Span::column(12));
     }
 
     unsafe_part_table
