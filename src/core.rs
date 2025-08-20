@@ -24,6 +24,21 @@ pub struct Course {
     #[serde(alias = "CourseName")]
     #[tabled(rename = "課程名稱")]
     pub course_name: String,
+    #[serde(alias = "CourseTime", alias = "ClassTime", alias = "TimeSlot", default)]
+    #[tabled(rename = "上課時間")]
+    pub course_time: String,
+    #[serde(alias = "CourseRoom", alias = "ClassRoom", alias = "Room", default)]
+    #[tabled(rename = "教室")]
+    pub course_room: String,
+    #[serde(alias = "Credit", alias = "Credits", alias = "CourseCredit", default)]
+    #[tabled(rename = "學分")]
+    pub credit: String,
+    #[serde(alias = "RequireOption", alias = "Compulsory", alias = "CourseType", alias = "Required", default)]
+    #[tabled(rename = "選必")]
+    pub require_option: String,
+    #[serde(alias = "SemesterType", alias = "FullHalf", alias = "Period", default)]
+    #[tabled(rename = "全半")]
+    pub course_type: String,
     #[serde(default)]
     #[tabled(rename = "選上機率(%)")]
     pub sucess_rate: f32,

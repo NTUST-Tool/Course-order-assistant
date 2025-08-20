@@ -14,54 +14,6 @@ use tabled::{
 pub mod core;
 use core::{extract_course_ids, fetch_all_courses, get_semester};
 
-use serde_json::{json, Value};
-
-pub async fn test_api_response() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let url = "https://querycourse.ntust.edu.tw/querycourse/api/courses";
-    
-    // Get current semester first
-    let semester_url = "https://querycourse.ntust.edu.tw/querycourse/api/semestersinfo";
-    let semester_response = client.get(semester_url).send().await?;
-    let semester_data = semester_response.json::<Value>().await?;
-    let semester = semester_data[0]["Semester"].as_str().unwrap_or("113-1");
-    
-    println!("Using semester: {}", semester);
-    
-    // Use a common course code for testing (trying a few different patterns)
-    let test_courses = vec!["CS1001101", "EE1001101", "MA1001101"];
-    
-    for course_id in test_courses {
-        let body = json!({
-            "Semester": semester,
-            "CourseNo": course_id,
-            "Language": "zh"
-        });
-        
-        match client.post(url).json(&body).send().await {
-            Ok(response) => {
-                match response.json::<Value>().await {
-                    Ok(json_response) => {
-                        if let Some(array) = json_response.as_array() {
-                            if !array.is_empty() {
-                                println!("Course: {} - API Response:", course_id);
-                                println!("{}", serde_json::to_string_pretty(&json_response)?);
-                                return Ok(());
-                            } else {
-                                println!("Course: {} - No data found", course_id);
-                            }
-                        }
-                    }
-                    Err(e) => println!("Failed to parse JSON for {}: {:?}", course_id, e),
-                }
-            }
-            Err(e) => println!("Failed to fetch {}: {:?}", course_id, e),
-        }
-    }
-    
-    Ok(())
-}
-
 #[derive(Parser, Debug)]
 #[command(author, about = "台灣科技大學\n選課志願序小幫手", long_about)]
 struct Args {
@@ -131,12 +83,6 @@ fn get_process_bar(count: usize) -> impl BarExt {
 
 #[tokio::main]
 async fn main() {
-    // Test API response to understand available fields
-    if std::env::args().any(|arg| arg == "--test-api") {
-        test_api_response().await.unwrap_or_else(|e| println!("API test failed: {:?}", e));
-        return;
-    }
-
     let file_path = get_path();
     let file_content = std::fs::read_to_string(&file_path).wrap_or_exit("檔案開啟失敗");
 
@@ -172,7 +118,7 @@ async fn main() {
         unsafe_part_table
             .with(Concat::vertical(safe_part_table))
             .with(Modify::new(Cell::new(len, 0)).with("以下課程皆會選上，無須考慮位置"))
-            .modify((len, 0), Span::column(7));
+            .modify((len, 0), Span::column(12));
     }
 
     unsafe_part_table
