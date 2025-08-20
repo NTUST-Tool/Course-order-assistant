@@ -209,6 +209,65 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_courses_table() {
+        // Create multiple sample courses to test the full table layout
+        let courses = vec![
+            Course {
+                course_id: "CS100101".to_string(),
+                course_name: "計算機概論".to_string(),
+                course_teacher: "王教授".to_string(),
+                credit: "3".to_string(),
+                required_elective: "必修".to_string(),
+                full_half: "全".to_string(),
+                class_time: "一234".to_string(),
+                classroom: "TR-101".to_string(),
+                student_count: 50,
+                student_limit: "60".to_string(),
+                sucess_rate: 83.33,
+                choice_rate: 1.2,
+            },
+            Course {
+                course_id: "MA100201".to_string(),
+                course_name: "微積分".to_string(),
+                course_teacher: "李教授".to_string(),
+                credit: "4".to_string(),
+                required_elective: "必修".to_string(),
+                full_half: "全".to_string(),
+                class_time: "二234五567".to_string(),
+                classroom: "MA-102".to_string(),
+                student_count: 45,
+                student_limit: "50".to_string(),
+                sucess_rate: 55.56,
+                choice_rate: 1.8,
+            },
+            Course {
+                course_id: "EN100301".to_string(),
+                course_name: "英文".to_string(),
+                course_teacher: "Chen Prof".to_string(),
+                credit: "2".to_string(),
+                required_elective: "選修".to_string(),
+                full_half: "半".to_string(),
+                class_time: "三34".to_string(),
+                classroom: "LB-205".to_string(),
+                student_count: 30,
+                student_limit: "25".to_string(),
+                sucess_rate: 69.44,
+                choice_rate: 1.44,
+            },
+        ];
+
+        let table = Table::new(&courses);
+        let table_string = table.to_string();
+        
+        println!("Multiple courses table:\n{}", table_string);
+        
+        // Verify all courses are in the table
+        assert!(table_string.contains("CS100101"));
+        assert!(table_string.contains("MA100201"));
+        assert!(table_string.contains("EN100301"));
+    }
+
+    #[test]
     fn test_course_deserialization_with_missing_fields() {
         use serde_json::{json, from_value};
         
