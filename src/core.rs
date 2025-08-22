@@ -26,7 +26,7 @@ pub struct Course {
     pub course_name: String,
     #[serde(default)]
     #[tabled(rename = "選上機率(%)")]
-    pub sucess_rate: f32,
+    pub success_rate: f32,
     #[serde(default)]
     #[tabled(rename = "選課比例")]
     pub choice_rate: f32,
@@ -57,13 +57,13 @@ pub async fn get_course_info(client: &Client, semester: &str, course_id: String)
     //      .wrap_or_exit("人數上限轉換失敗");
 
     data.choice_rate = round_digits(raw_choice_rate, 2);
-    data.sucess_rate = 100.0;
+    data.success_rate = 100.0;
     if data.choice_rate > 0.0 {
-        data.sucess_rate = 100.0 / data.choice_rate;
-        if data.sucess_rate > 100.0 {
-            data.sucess_rate = 100.0;
+        data.success_rate = 100.0 / data.choice_rate;
+        if data.success_rate > 100.0 {
+            data.success_rate = 100.0;
         }
-        data.sucess_rate = round_digits(data.sucess_rate, 2);
+        data.success_rate = round_digits(data.success_rate, 2);
     }
     Ok(data)
 }
@@ -101,7 +101,7 @@ pub async fn fetch_all_courses(
         }
         match result {
             Ok(course_info) => {
-                if course_info.sucess_rate == 100.0 {
+                if course_info.success_rate == 100.0 {
                     safe_courses.push(course_info);
                 } else {
                     unsafe_courses.push(course_info);
