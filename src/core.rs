@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
+use encoding_rs::Encoding;
 use futures::{stream::FuturesUnordered, StreamExt};
+use mailparse::{parse_mail, MailHeaderMap, ParsedMail};
 use regex::Regex;
 use reqwest::Client;
 use scraper::{Html, Selector};
@@ -242,20 +244,166 @@ pub async fn fetch_all_courses_with_identity(
     (safe_courses, unsafe_courses, unknown_courses)
 }
 
+/// Detect if the content is MHTML format by checking for multipart boundaries
+pub fn is_mhtml_format(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    let first_tag = lower.find('<').unwrap_or(usize::MAX);
+    let sniff = &lower[..first_tag.min(4096).min(lower.len())];
+
+    let has_mime = sniff.contains("mime-version:");
+    let has_multipart = sniff.contains("content-type: multipart/");
+    let has_boundary = sniff.contains("boundary=");
+
+    (has_mime || has_multipart) && has_boundary
+}
+
+/// Extract and decode HTML content from MHTML format
+/// Walk through MIME tree to collect candidate HTML parts with metadata
+fn decode_part_to_utf8(
+    part: &ParsedMail<'_>,
+) -> Result<(String, usize, Option<String>, Option<String>)> {
+    let raw = part.get_body_raw()?;
+    let raw_len = raw.len();
+
+    let charset = part
+        .ctype
+        .params
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("charset"))
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("utf-8");
+
+    let enc = Encoding::for_label(charset.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+    let (cow, _, _) = enc.decode(&raw);
+    let html = cow.into_owned();
+
+    let content_location = part.get_headers().get_first_value("Content-Location");
+    let content_id = part
+        .get_headers()
+        .get_first_value("Content-ID")
+        .map(|mut s| {
+            s.retain(|ch| ch != '<' && ch != '>');
+            s
+        });
+
+    Ok((html, raw_len, content_location, content_id))
+}
+
+fn collect_html_parts<'a>(
+    part: &'a ParsedMail<'a>,
+    acc: &mut Vec<(String, usize, Option<String>, Option<String>)>,
+) -> Result<()> {
+    if part.ctype.mimetype.eq_ignore_ascii_case("text/html") {
+        acc.push(decode_part_to_utf8(part)?);
+    }
+    for sp in &part.subparts {
+        collect_html_parts(sp, acc)?;
+    }
+    Ok(())
+}
+
+fn pick_best_html(
+    mut candidates: Vec<(String, usize, Option<String>, Option<String>)>,
+    root_cid: Option<&str>,
+) -> Option<String> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    if let Some(cid) = root_cid {
+        if let Some((html, _, _, _)) = candidates
+            .iter()
+            .find(|(_, _, _, c)| {
+                if let Some(id) = c {
+                    id.eq_ignore_ascii_case(cid)
+                } else {
+                    false
+                }
+            })
+            .cloned()
+        {
+            return Some(html);
+        }
+    }
+
+    candidates.sort_by(|a, b| {
+        let score = |loc: &Option<String>, len: usize, html: &str| -> (i32, i64) {
+            let mut s = 0;
+            if let Some(l) = loc {
+                let ll = l.to_ascii_lowercase();
+                if ll.ends_with(".html") || ll.ends_with(".htm") {
+                    s += 2;
+                }
+                let p = ll.split(&['?', '#'][..]).next().unwrap_or(&ll);
+                let depth = p.matches('/').count();
+                if depth <= 3 {
+                    s += 1;
+                }
+            }
+            let h = html.to_ascii_lowercase();
+            if h.contains("<html") {
+                s += 1;
+            }
+            if h.contains("<body") {
+                s += 1;
+            }
+            (s, len as i64)
+        };
+        let sa = score(&a.2, a.1, &a.0);
+        let sb = score(&b.2, b.1, &b.0);
+        sa.cmp(&sb)
+    });
+
+    candidates.pop().map(|t| t.0)
+}
+
+pub fn extract_html_from_mhtml(content: &str) -> anyhow::Result<String> {
+    let mail = parse_mail(content.as_bytes())?;
+
+    let root_cid = mail
+        .ctype
+        .params
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("start"))
+        .map(|(_, v)| v.trim_matches(['<', '>'].as_ref()).to_string());
+
+    let mut candidates = Vec::new();
+    collect_html_parts(&mail, &mut candidates)?;
+    pick_best_html(candidates, root_cid.as_deref())
+        .ok_or_else(|| anyhow::anyhow!("在 MHTML 中找不到 text/html part"))
+}
+
+/// If it looks like MHTML, parse and return decoded UTF-8 HTML.
+/// Otherwise, return the original content.
+pub fn preprocess_file_content(file_content: &str) -> String {
+    if is_mhtml_format(file_content) {
+        if let Ok(html) = extract_html_from_mhtml(file_content) {
+            return html;
+        }
+    } else {
+        if let Ok(html) = extract_html_from_mhtml(file_content) {
+            return html;
+        }
+    }
+    file_content.to_string()
+}
+
 pub fn extract_course_ids(file_content: &str) -> Vec<String> {
+    let processed = preprocess_file_content(file_content);
+
     let re = Regex::new(r"[A-Z]{2}[G|1-9]{1}[AB|0-9]{3}[0|1|3|5|7]{1}[0-9]{2}")
         .expect("Regex 模板創建失敗");
 
-    let document = Html::parse_document(file_content);
+    let document = Html::parse_document(&processed);
     let selector = Selector::parse("#cartTable").expect("無法解析選擇器");
 
-    if let Some(table_element) = document.select(&selector).next() {
-        let table_html = table_element.inner_html();
-        re.find_iter(&table_html)
+    if let Some(node) = document.select(&selector).next() {
+        let sub_html = node.html();
+        re.find_iter(&sub_html)
             .map(|m| m.as_str().to_string())
             .collect()
     } else {
-        re.find_iter(file_content)
+        re.find_iter(&processed)
             .map(|m| m.as_str().to_string())
             .collect()
     }
@@ -264,7 +412,8 @@ pub fn extract_course_ids(file_content: &str) -> Vec<String> {
 /// Extract student identity information from HTML content
 /// Looks for student identity in the format: "四技 資訊工程系 二年級 甲班"
 pub fn extract_student_identity(html_content: &str) -> Result<StudentIdentity> {
-    let document = Html::parse_document(html_content);
+    let processed_content = preprocess_file_content(html_content);
+    let document = Html::parse_document(&processed_content);
     let selector = Selector::parse("span").expect("無法解析選擇器");
 
     // Find the span element containing grade information
