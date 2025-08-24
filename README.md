@@ -52,3 +52,6 @@
 > 
 > ![image](https://github.com/user-attachments/assets/18d82ef8-04a5-410d-aabc-8014d50a942a)
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=NTUST-Tool/Course-order-assistant&type=Date)](https://www.star-history.com/#NTUST-Tool/Course-order-assistant&Date)
