@@ -207,16 +207,13 @@ pub async fn fetch_all_courses_with_identity(
         let identity = student_identity.cloned();
 
         futures.push(async move {
-            // Use enhanced PE course logic if student identity is available and it's a PE course
-            if let Some(identity) = identity {
-                if course.contains("PE") {
-                    get_pe_course_info_with_identity(&client, &semester, course, &identity).await
-                } else {
-                    get_course_info(&client, &semester, course).await
+            if course.contains("PE") {
+                if let Some(id) = identity.as_ref() {
+                    return get_pe_course_info_with_identity(&client, &semester, course, id).await;
                 }
-            } else {
-                get_course_info(&client, &semester, course).await
             }
+
+            get_course_info(&client, &semester, course).await
         });
     }
     let mut what = callback;
@@ -380,11 +377,8 @@ pub fn preprocess_file_content(file_content: &str) -> String {
         if let Ok(html) = extract_html_from_mhtml(file_content) {
             return html;
         }
-    } else {
-        if let Ok(html) = extract_html_from_mhtml(file_content) {
-            return html;
-        }
     }
+
     file_content.to_string()
 }
 
@@ -459,5 +453,7 @@ pub fn extract_student_identity(html_content: &str) -> Result<StudentIdentity> {
     }
 
     // No grade information found in any span element
-    Err(anyhow!("未找到包含年級資訊的文字內容。請確認 HTML 內容是否正確，或將此錯誤訊息回報給開發者。"))
+    Err(anyhow!(
+        "未找到包含年級資訊的文字內容。請確認 HTML 內容是否正確，或將此錯誤訊息回報給開發者。"
+    ))
 }

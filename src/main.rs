@@ -99,8 +99,9 @@ async fn main() {
                 identity.program_type, identity.department, identity.grade);
             Some(identity)
         }
-        Err(_) => {
+        Err(err) => {
             println!("⚠ 無法提取學生身份資訊，將使用一般計算方式計算體育課人數");
+            println!("錯誤詳細: {}", err);
 
             None
         }
