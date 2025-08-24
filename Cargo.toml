@@ -24,6 +24,8 @@ kdam = { version = "0.6.1", features = ["spinner", "template"] }
 futures = "0.3.31"
 scraper = "0.24.0"
 anyhow = "1.0.98"
+mailparse = "0.16.1"
+encoding_rs = "0.8"
 
 [[bin]]
 name = "Course-order-assistant"

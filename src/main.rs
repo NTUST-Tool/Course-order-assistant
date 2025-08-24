@@ -12,7 +12,7 @@ use tabled::{
     Table,
 };
 pub mod core;
-use core::{extract_course_ids, fetch_all_courses, get_semester};
+use core::{extract_course_ids, extract_student_identity, fetch_all_courses, fetch_all_courses_with_identity, get_semester};
 
 #[derive(Parser, Debug)]
 #[command(author, about = "台灣科技大學\n選課志願序小幫手", long_about)]
@@ -92,16 +92,33 @@ async fn main() {
 
     let semester = get_semester(&client).await.wrap_or_exit("無法取得學期資訊");
 
+    // Try to extract student identity from the HTML file for enhanced PE course calculations
+    let student_identity = match extract_student_identity(&file_content) {
+        Ok(identity) => {
+            println!("✓ 成功提取學生身份資訊: {} {} {}",
+                identity.program_type, identity.department, identity.grade);
+            Some(identity)
+        }
+        Err(err) => {
+            println!("⚠ 無法提取學生身份資訊，將使用一般計算方式計算體育課人數");
+            println!("錯誤詳細: {}", err);
+
+            None
+        }
+    };
+
     let mut pb = get_process_bar(course_ids.len());
     let callback = || {
         let _ = pb.update(1);
     };
 
-    // let callback = || {
-    // };
-
-    let (mut safe_courses, mut unsafe_courses, unknown_courses) =
-        fetch_all_courses(course_ids, &client, &semester, callback).await;
+    // Use enhanced course fetching with student identity if available
+    let (mut safe_courses, mut unsafe_courses, unknown_courses) = 
+        if let Some(ref identity) = student_identity {
+            fetch_all_courses_with_identity(course_ids, &client, &semester, Some(identity), callback).await
+        } else {
+            fetch_all_courses(course_ids, &client, &semester, callback).await
+        };
     for course in unknown_courses {
         eprint!("\n警告: 查無課程資料，課程代碼: {}", course);
     }
