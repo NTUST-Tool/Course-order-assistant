@@ -8,6 +8,8 @@ on:
       - "Cargo.lock"
       - "resources/**"
       - ".github/workflows/ci.yaml"
+    branches:
+      - "rust"
 
 jobs:
   build:
