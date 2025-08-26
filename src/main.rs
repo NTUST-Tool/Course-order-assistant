@@ -6,13 +6,16 @@ use std::io::prelude::*;
 use std::process::exit;
 use tabled::{
     settings::{
-        object::{Cell, Segment},
-        Alignment, Concat, Modify, Panel, Span, Style,
+        object::{Cell, Columns, Segment},
+        Alignment, Concat, Modify, Panel, Remove, Span, Style,
     },
     Table,
 };
 pub mod core;
-use core::{extract_course_ids, extract_student_identity, fetch_all_courses, fetch_all_courses_with_identity, get_semester};
+use core::{
+    extract_course_ids, extract_student_identity, fetch_all_courses,
+    fetch_all_courses_with_identity, get_semester,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, about = "台灣科技大學\n選課志願序小幫手", long_about)]
@@ -95,8 +98,10 @@ async fn main() {
     // Try to extract student identity from the HTML file for enhanced PE course calculations
     let student_identity = match extract_student_identity(&file_content) {
         Ok(identity) => {
-            println!("✓ 成功提取學生身份資訊: {} {} {}",
-                identity.program_type, identity.department, identity.grade);
+            println!(
+                "✓ 成功提取學生身份資訊: {} {} {}",
+                identity.program_type, identity.department, identity.grade
+            );
             Some(identity)
         }
         Err(err) => {
@@ -113,12 +118,13 @@ async fn main() {
     };
 
     // Use enhanced course fetching with student identity if available
-    let (mut safe_courses, mut unsafe_courses, unknown_courses) = 
-        if let Some(ref identity) = student_identity {
-            fetch_all_courses_with_identity(course_ids, &client, &semester, Some(identity), callback).await
-        } else {
-            fetch_all_courses(course_ids, &client, &semester, callback).await
-        };
+    let (mut safe_courses, mut unsafe_courses, unknown_courses) = if let Some(ref identity) =
+        student_identity
+    {
+        fetch_all_courses_with_identity(course_ids, &client, &semester, Some(identity), callback).await
+    } else {
+        fetch_all_courses(course_ids, &client, &semester, callback).await
+    };
     for course in unknown_courses {
         eprint!("\n警告: 查無課程資料，課程代碼: {}", course);
     }
@@ -127,15 +133,22 @@ async fn main() {
     unsafe_courses.sort_by(|a, b| b.choice_rate.partial_cmp(&a.choice_rate).unwrap());
     safe_courses.sort_by(|a, b| b.choice_rate.partial_cmp(&a.choice_rate).unwrap());
 
-    let safe_part_table = Table::new(&safe_courses);
+    let mut safe_part_table = Table::new(&safe_courses);
     let mut unsafe_part_table = Table::new(&unsafe_courses);
+
+    if unsafe_courses.iter().all(|c| c.class_room_no.is_empty())
+        || safe_courses.iter().all(|c| c.class_room_no.is_empty())
+    {
+        safe_part_table.with(Remove::column(Columns::one(6)));
+        unsafe_part_table.with(Remove::column(Columns::one(6)));
+    }
 
     if safe_courses.len() > 0 {
         let len = unsafe_courses.len() + 1;
         unsafe_part_table
             .with(Concat::vertical(safe_part_table))
             .with(Modify::new(Cell::new(len, 0)).with("以下課程皆會選上，無須考慮位置"))
-            .modify((len, 0), Span::column(7));
+            .modify((len, 0), Span::column(99));
     }
 
     unsafe_part_table
