@@ -5,7 +5,7 @@ use mailparse::{parse_mail, MailHeaderMap, ParsedMail};
 use regex::Regex;
 use reqwest::Client;
 use scraper::{Html, Selector};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{from_value, json, Value};
 use tabled::Tabled;
 
@@ -26,6 +26,21 @@ pub struct Course {
     #[serde(alias = "CourseName")]
     #[tabled(rename = "課程名稱")]
     pub course_name: String,
+    #[serde(alias = "Node")]
+    #[tabled(rename = "上課星期節次")]
+    pub node: String,
+    #[serde(alias = "ClassRoomNo", deserialize_with = "deserialize_null_default")]
+    #[tabled(rename = "上課教室")]
+    pub class_room_no: String,
+    #[serde(alias = "CreditPoint")]
+    #[tabled(rename = "學分")]
+    pub course_times: String,
+    #[serde(alias = "RequireOption")]
+    #[tabled(rename = "必選修")]
+    pub require_option: String,
+    #[serde(alias = "AllYear")]
+    #[tabled(rename = "全半")]
+    pub all_year: String,
     #[serde(default)]
     #[tabled(rename = "選上機率(%)")]
     pub success_rate: f32,
@@ -59,6 +74,15 @@ pub struct CourseDetail {
     pub restrict: String,
     #[serde(alias = "Persons")]
     pub persons: i32,
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 pub fn round_digits(num: f32, digits: i32) -> f32 {
@@ -97,7 +121,12 @@ pub async fn get_course_info(client: &Client, semester: &str, course_id: String)
     let json_object = &json_array[0];
     let mut data = from_value::<Course>(json_object.clone())?;
     //    .wrap_or_exit("不可能，絕對不可能，怎麼可能沒有課程資料");
-
+    if json_array.as_array().unwrap().len() > 1 {
+        for item in json_array.as_array().unwrap().iter().skip(1) {
+            let extra: Course = from_value(item.clone())?;
+            data.node = format!("{},{}", data.node, extra.node);
+        }
+    }
     let raw_choice_rate = (data.student_count as f32) / (data.student_limit).parse::<f32>()?;
     //      .wrap_or_exit("人數上限轉換失敗");
 
@@ -110,6 +139,16 @@ pub async fn get_course_info(client: &Client, semester: &str, course_id: String)
         }
         data.success_rate = round_digits(data.success_rate, 2);
     }
+    data.require_option = match data.require_option.as_str() {
+        "R" => "必".to_string(),
+        "E" => "選".to_string(),
+        _ => data.require_option,
+    };
+    data.all_year = match data.all_year.as_str() {
+        "F" => "全".to_string(),
+        "H" => "半".to_string(),
+        _ => data.all_year,
+    };
     Ok(data)
 }
 
