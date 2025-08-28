@@ -12,10 +12,8 @@ use tabled::{
     Table,
 };
 pub mod core;
-use core::{
-    extract_course_ids, extract_student_identity, fetch_all_courses,
-    fetch_all_courses_with_identity, get_semester,
-};
+pub mod model;
+use core::{extract_course_ids, extract_student_identity, fetch_all_courses, get_semester};
 
 #[derive(Parser, Debug)]
 #[command(author, about = "台灣科技大學\n選課志願序小幫手", long_about)]
@@ -106,7 +104,7 @@ async fn main() {
         }
         Err(err) => {
             println!("⚠ 無法提取學生身份資訊，將使用一般計算方式計算體育課人數");
-            println!("錯誤詳細: {}", err);
+            eprintln!("錯誤詳細: {}", err);
 
             None
         }
@@ -118,13 +116,9 @@ async fn main() {
     };
 
     // Use enhanced course fetching with student identity if available
-    let (mut safe_courses, mut unsafe_courses, unknown_courses) = if let Some(ref identity) =
-        student_identity
-    {
-        fetch_all_courses_with_identity(course_ids, &client, &semester, Some(identity), callback).await
-    } else {
-        fetch_all_courses(course_ids, &client, &semester, callback).await
-    };
+    let (mut safe_courses, mut unsafe_courses, unknown_courses) =
+        fetch_all_courses(course_ids, &client, &semester, student_identity, callback).await;
+
     for course in unknown_courses {
         eprint!("\n警告: 查無課程資料，課程代碼: {}", course);
     }
@@ -137,7 +131,7 @@ async fn main() {
     let mut unsafe_part_table = Table::new(&unsafe_courses);
 
     if unsafe_courses.iter().all(|c| c.class_room_no.is_empty())
-        || safe_courses.iter().all(|c| c.class_room_no.is_empty())
+        && safe_courses.iter().all(|c| c.class_room_no.is_empty())
     {
         safe_part_table.with(Remove::column(Columns::one(6)));
         unsafe_part_table.with(Remove::column(Columns::one(6)));

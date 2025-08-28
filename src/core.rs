@@ -1,3 +1,4 @@
+use crate::model::{Course, CourseDetailResponse, StudentIdentity};
 use anyhow::{anyhow, Result};
 use encoding_rs::Encoding;
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -5,85 +6,7 @@ use mailparse::{parse_mail, MailHeaderMap, ParsedMail};
 use regex::Regex;
 use reqwest::Client;
 use scraper::{Html, Selector};
-use serde::{Deserialize, Deserializer};
 use serde_json::{from_value, json, Value};
-use tabled::Tabled;
-
-#[derive(Debug, Deserialize, Tabled)]
-pub struct Course {
-    #[serde(alias = "CourseNo")]
-    #[tabled(rename = "課程代碼")]
-    pub course_id: String,
-    #[serde(alias = "AllStudent")]
-    #[tabled(rename = "選課人數")]
-    pub student_count: i32,
-    #[serde(alias = "Restrict2")]
-    #[tabled(rename = "人數上限")]
-    pub student_limit: String,
-    #[serde(alias = "CourseTeacher")]
-    #[tabled(rename = "授課老師")]
-    pub course_teacher: String,
-    #[serde(alias = "CourseName")]
-    #[tabled(rename = "課程名稱")]
-    pub course_name: String,
-    #[serde(alias = "Node")]
-    #[tabled(rename = "上課星期節次")]
-    pub node: String,
-    #[serde(alias = "ClassRoomNo", deserialize_with = "deserialize_null_default")]
-    #[tabled(rename = "上課教室")]
-    pub class_room_no: String,
-    #[serde(alias = "CreditPoint")]
-    #[tabled(rename = "學分")]
-    pub course_times: String,
-    #[serde(alias = "RequireOption")]
-    #[tabled(rename = "必選修")]
-    pub require_option: String,
-    #[serde(alias = "AllYear")]
-    #[tabled(rename = "全半")]
-    pub all_year: String,
-    #[serde(default)]
-    #[tabled(rename = "選上機率(%)")]
-    pub success_rate: f32,
-    #[serde(default)]
-    #[tabled(rename = "選課比例")]
-    pub choice_rate: f32,
-}
-
-#[derive(Debug, Clone)]
-pub struct StudentIdentity {
-    pub program_type: String, // 四技、二專等
-    pub department: String,   // 系所
-    pub grade: String,        // 年級
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CourseDetailResponse {
-    #[serde(alias = "Display")]
-    pub display: String,
-    #[serde(alias = "Result")]
-    pub result: Vec<CourseDetail>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CourseDetail {
-    #[serde(alias = "EducationCode")]
-    pub education_code: String,
-    #[serde(alias = "DepartmentAliase")]
-    pub department_aliase: String,
-    #[serde(alias = "Restrict")]
-    pub restrict: String,
-    #[serde(alias = "Persons")]
-    pub persons: i32,
-}
-
-fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    T: Default + Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    let opt = Option::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
 
 pub fn round_digits(num: f32, digits: i32) -> f32 {
     let base = 10.0_f32.powi(digits);
@@ -93,20 +16,24 @@ pub fn round_digits(num: f32, digits: i32) -> f32 {
 /// Build a department search string based on student identity,
 /// For example, StudentIdentity { program_type: "四技", department: "資訊工程系", grade: "二年級", class: "甲班" }
 /// Will generate "四技資訊工程系二"
-pub fn build_department_search_string(identity: &StudentIdentity) -> String {
-    let grade_number = identity
-        .grade
-        .chars()
-        .find(|c| matches!(c, '一' | '二' | '三' | '四'))
-        .expect("年級資訊不完整");
+impl StudentIdentity {
+    pub fn to_string(&self) -> String {
+        let grade_number = self
+            .grade
+            .chars()
+            .find(|c| matches!(c, '一' | '二' | '三' | '四'))
+            .expect("年級資訊不完整");
 
-    format!(
-        "{}{}{}",
-        identity.program_type, identity.department, grade_number
-    )
+        format!("{}{}{}", self.program_type, self.department, grade_number)
+    }
 }
 
-pub async fn get_course_info(client: &Client, semester: &str, course_id: String) -> Result<Course> {
+pub async fn get_course_info(
+    client: &Client,
+    semester: &str,
+    course_id: String,
+    student_identity: Option<StudentIdentity>,
+) -> Result<Course> {
     let url = "https://querycourse.ntust.edu.tw/querycourse/api/courses";
     let body = json!({
         "Semester": semester,
@@ -131,14 +58,12 @@ pub async fn get_course_info(client: &Client, semester: &str, course_id: String)
     //      .wrap_or_exit("人數上限轉換失敗");
 
     data.choice_rate = round_digits(raw_choice_rate, 2);
-    data.success_rate = 100.0;
-    if data.choice_rate > 0.0 {
-        data.success_rate = 100.0 / data.choice_rate;
-        if data.success_rate > 100.0 {
-            data.success_rate = 100.0;
-        }
-        data.success_rate = round_digits(data.success_rate, 2);
-    }
+    data.success_rate = if data.choice_rate > 0.0 {
+        round_digits((100.0 / data.choice_rate).min(100.0), 2)
+    } else {
+        100.0
+    };
+
     data.require_option = match data.require_option.as_str() {
         "R" => "必".to_string(),
         "E" => "選".to_string(),
@@ -149,49 +74,35 @@ pub async fn get_course_info(client: &Client, semester: &str, course_id: String)
         "H" => "半".to_string(),
         _ => data.all_year,
     };
-    Ok(data)
-}
-
-/// Use a new probability calculation method for physical education courses
-/// Find corresponding enrollment limits based on the user's department information
-pub async fn get_pe_course_info_with_identity(
-    client: &Client,
-    semester: &str,
-    course_id: String,
-    student_identity: &StudentIdentity,
-) -> Result<Course> {
-    let mut course = get_course_info(client, semester, course_id.clone()).await?;
-
-    if course_id.contains("PE") {
+    if !course_id.contains("PE") {
+        return Ok(data);
+    }
+    if let Some(student_identity) = student_identity {
         match get_course_limit_detail(client, semester, &course_id).await {
             Ok(limit_response) => {
-                let search_string = build_department_search_string(student_identity);
+                let search_string = student_identity.to_string();
 
                 if let Some(dept_limit) = limit_response
                     .result
                     .iter()
                     .find(|d| d.department_aliase == search_string)
                 {
-                    let restrict_num = dept_limit.restrict.parse().unwrap_or(1.0);
-                    let persons = dept_limit.persons as f32;
+                    let raw_choice_rate =
+                        (dept_limit.persons as f32) / dept_limit.restrict.parse::<f32>()?;
 
-                    if restrict_num <= 0.0 {
-                        return Ok(course);
-                    }
-
-                    course.choice_rate = round_digits(persons / restrict_num, 2);
-                    course.success_rate = if course.choice_rate > 0.0 {
-                        round_digits(100.0_f32.min(100.0 / course.choice_rate), 2)
+                    data.choice_rate = round_digits(raw_choice_rate, 2);
+                    data.success_rate = if data.choice_rate > 0.0 {
+                        round_digits((100.0 / data.choice_rate).min(100.0), 2)
                     } else {
                         100.0
                     };
                 }
             }
-            Err(_) => return Ok(course),
+            Err(_) => return Ok(data),
         }
     }
 
-    Ok(course)
+    Ok(data)
 }
 
 pub async fn get_semester(client: &Client) -> Result<String> {
@@ -223,16 +134,7 @@ pub async fn fetch_all_courses(
     course_ids: Vec<String>,
     client: &Client,
     semester: &str,
-    callback: impl FnMut(),
-) -> (Vec<Course>, Vec<Course>, Vec<String>) {
-    fetch_all_courses_with_identity(course_ids, client, semester, None, callback).await
-}
-
-pub async fn fetch_all_courses_with_identity(
-    course_ids: Vec<String>,
-    client: &Client,
-    semester: &str,
-    student_identity: Option<&StudentIdentity>,
+    student_identity: Option<StudentIdentity>,
     callback: impl FnMut(),
 ) -> (Vec<Course>, Vec<Course>, Vec<String>) {
     let mut unsafe_courses: Vec<Course> = Vec::new();
@@ -240,19 +142,13 @@ pub async fn fetch_all_courses_with_identity(
     let mut unknown_courses = Vec::new();
 
     let mut futures = FuturesUnordered::new();
-    for course in course_ids.into_iter() {
+    for course_id in course_ids.into_iter() {
         let client = client.clone();
         let semester = semester.to_string();
-        let identity = student_identity.cloned();
+        let identity = student_identity.clone();
 
         futures.push(async move {
-            if course.contains("PE") {
-                if let Some(id) = identity.as_ref() {
-                    return get_pe_course_info_with_identity(&client, &semester, course, id).await;
-                }
-            }
-
-            get_course_info(&client, &semester, course).await
+            get_course_info(&client, &semester, course_id, identity).await
         });
     }
     let mut what = callback;
