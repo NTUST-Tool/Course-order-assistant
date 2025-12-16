@@ -1,30 +1,33 @@
+use std::fmt;
+
 use crate::model::{Course, CourseDetailResponse, StudentIdentity};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use encoding_rs::Encoding;
-use futures::{stream::FuturesUnordered, StreamExt};
-use mailparse::{parse_mail, MailHeaderMap, ParsedMail};
+use futures::{StreamExt, stream::FuturesUnordered};
+use mailparse::{MailHeaderMap, ParsedMail, parse_mail};
 use regex::Regex;
 use reqwest::Client;
 use scraper::{Html, Selector};
-use serde_json::{from_value, json, Value};
+use serde_json::{Value, from_value, json};
 
 pub fn round_digits(num: f32, digits: i32) -> f32 {
     let base = 10.0_f32.powi(digits);
-    return (num * base).round() / base;
+    (num * base).round() / base
 }
 
-/// Build a department search string based on student identity,
-/// For example, StudentIdentity { program_type: "四技", department: "資訊工程系", grade: "二年級", class: "甲班" }
-/// Will generate "四技資訊工程系二"
-impl StudentIdentity {
-    pub fn to_string(&self) -> String {
+impl fmt::Display for StudentIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let grade_number = self
             .grade
             .chars()
             .find(|c| matches!(c, '一' | '二' | '三' | '四'))
             .expect("年級資訊不完整");
 
-        format!("{}{}{}", self.program_type, self.department, grade_number)
+        write!(
+            f,
+            "{}{}{}",
+            self.program_type, self.department, grade_number
+        )
     }
 }
 
@@ -147,16 +150,14 @@ pub async fn fetch_all_courses(
         let semester = semester.to_string();
         let identity = student_identity.clone();
 
-        futures.push(async move {
-            get_course_info(&client, &semester, course_id, identity).await
-        });
+        futures.push(async move { get_course_info(&client, &semester, course_id, identity).await });
     }
     let mut what = callback;
 
     while let Some(result) = futures.next().await {
         what();
-        if result.is_err() {
-            unknown_courses.push(result.unwrap_err().to_string());
+        if let Err(err) = result {
+            unknown_courses.push(err.to_string());
             continue;
         }
         match result {
@@ -242,8 +243,8 @@ fn pick_best_html(
         return None;
     }
 
-    if let Some(cid) = root_cid {
-        if let Some((html, _, _, _)) = candidates
+    if let Some(cid) = root_cid
+        && let Some((html, _, _, _)) = candidates
             .iter()
             .find(|(_, _, _, c)| {
                 if let Some(id) = c {
@@ -253,9 +254,8 @@ fn pick_best_html(
                 }
             })
             .cloned()
-        {
-            return Some(html);
-        }
+    {
+        return Some(html);
     }
 
     candidates.sort_by(|a, b| {
@@ -308,10 +308,10 @@ pub fn extract_html_from_mhtml(content: &str) -> anyhow::Result<String> {
 /// If it looks like MHTML, parse and return decoded UTF-8 HTML.
 /// Otherwise, return the original content.
 pub fn preprocess_file_content(file_content: &str) -> String {
-    if is_mhtml_format(file_content) {
-        if let Ok(html) = extract_html_from_mhtml(file_content) {
-            return html;
-        }
+    if is_mhtml_format(file_content)
+        && let Ok(html) = extract_html_from_mhtml(file_content)
+    {
+        return html;
     }
 
     file_content.to_string()

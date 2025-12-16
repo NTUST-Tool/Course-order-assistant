@@ -1,15 +1,15 @@
 use clap::{CommandFactory, FromArgMatches, Parser};
-use kdam::{tqdm, BarExt, Spinner};
+use kdam::{BarExt, Spinner, tqdm};
 use reqwest::Client;
 use std::io;
 use std::io::prelude::*;
 use std::process::exit;
 use tabled::{
-    settings::{
-        object::{Cell, Columns, Segment},
-        Alignment, Concat, Modify, Panel, Remove, Span, Style,
-    },
     Table,
+    settings::{
+        Alignment, Concat, Modify, Panel, Remove, Span, Style,
+        object::{Cell, Columns, Segment},
+    },
 };
 pub mod core;
 pub mod model;
@@ -45,17 +45,17 @@ where
 }
 fn get_path() -> String {
     let matches = Args::command().try_get_matches();
-    if matches.is_err() {
-        let _ = matches.as_ref().unwrap_err().print();
+    if let Err(err) = &matches {
+        let _ = err.print();
         wait_exit_with_code(1);
     }
     let args = Args::from_arg_matches(&matches.unwrap());
-    if args.is_err() {
-        let _ = args.as_ref().unwrap_err().print();
+    if let Err(err) = &args {
+        let _ = err.print();
         wait_exit_with_code(1);
     }
-    let path = args.unwrap().file_path;
-    return path;
+
+    args.unwrap().file_path
 }
 
 fn wait_exit_with_code(code: i32) {
@@ -75,7 +75,21 @@ fn get_process_bar(count: usize) -> impl BarExt {
         force_refresh = true,
         bar_format = "{desc suffix=' '}|{animation}| {spinner} {count}/{total} [{percentage:.0}%] in {elapsed human=true} ({rate:.1}/s, eta: {remaining human=true})",
         spinner = Spinner::new(
-            &["▁▂▃", "▂▃▄", "▃▄▅", "▄▅▆", "▅▆▇", "▆▇█", "▇█▇", "█▇▆", "▇▆▅", "▆▅▄", "▅▄▃", "▄▃▂", "▃▂▁"],
+            &[
+                "▁▂▃",
+                "▂▃▄",
+                "▃▄▅",
+                "▄▅▆",
+                "▅▆▇",
+                "▆▇█",
+                "▇█▇",
+                "█▇▆",
+                "▇▆▅",
+                "▆▅▄",
+                "▅▄▃",
+                "▄▃▂",
+                "▃▂▁"
+            ],
             30.0,
             1.0,
         )
@@ -93,21 +107,26 @@ async fn main() {
 
     let semester = get_semester(&client).await.wrap_or_exit("無法取得學期資訊");
 
+    let need_identity_extraction = course_ids.iter().any(|id| id.starts_with("PE"));
     // Try to extract student identity from the HTML file for enhanced PE course calculations
-    let student_identity = match extract_student_identity(&file_content) {
-        Ok(identity) => {
-            println!(
-                "✓ 成功提取學生身份資訊: {} {} {}",
-                identity.program_type, identity.department, identity.grade
-            );
-            Some(identity)
-        }
-        Err(err) => {
-            println!("⚠ 無法提取學生身份資訊，將使用一般計算方式計算體育課人數");
-            eprintln!("錯誤詳細: {}", err);
+    let student_identity = if need_identity_extraction {
+        match extract_student_identity(&file_content) {
+            Ok(identity) => {
+                println!(
+                    "✓ 成功提取學生身份資訊: {} {} {}",
+                    identity.program_type, identity.department, identity.grade
+                );
+                Some(identity)
+            }
+            Err(err) => {
+                println!("⚠ 無法提取學生身份資訊，將使用一般計算方式計算體育課人數");
+                eprintln!("錯誤詳細: {}", err);
 
-            None
+                None
+            }
         }
+    } else {
+        None
     };
 
     let mut pb = get_process_bar(course_ids.len());
@@ -137,7 +156,7 @@ async fn main() {
         unsafe_part_table.with(Remove::column(Columns::one(6)));
     }
 
-    if safe_courses.len() > 0 {
+    if !safe_courses.is_empty() {
         let len = unsafe_courses.len() + 1;
         unsafe_part_table
             .with(Concat::vertical(safe_part_table))
