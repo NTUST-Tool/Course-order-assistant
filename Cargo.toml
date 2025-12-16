@@ -2,7 +2,7 @@
 name = "Course-order-assistant"
 description = "A course order assistant for NTUST"
 version = "1.3.0"
-edition = "2021"
+edition = "2024"
 
 [package.metadata.winresource]
 OriginalFilename = "選課志願序小幫手.exe"
