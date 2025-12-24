@@ -10,6 +10,9 @@ use rand::Rng;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::collections::HashMap;
+use std::time::Instant;
+use md5;
 use tabled::{
     Table,
     settings::{
@@ -27,6 +30,14 @@ use model::Course;
 struct Args {
     #[arg(required = false)]
     file_path: Option<String>,
+}
+
+/// 課程空缺狀態追蹤
+#[derive(Clone)]
+struct CourseVacancyState {
+    had_vacancy: bool,              // 上次是否有空缺
+    notification_count: u32,        // 已發送通知次數
+    last_notification_time: Option<Instant>, // 上次發送通知的時間
 }
 
 fn get_path() -> Option<String> {
@@ -108,6 +119,65 @@ fn read_input(prompt: &str) -> String {
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
     input.trim().to_string()
+}
+
+/// 根據學號生成 ntfy topic (學號_MD5後4位)
+fn generate_ntfy_topic(student_id: &str) -> String {
+    let digest = md5::compute(student_id.as_bytes());
+    let hash = format!("{:x}", digest);
+    let last_4 = &hash[hash.len()-4..];
+    format!("{}_{}", student_id, last_4)
+}
+
+/// 獲取學號輸入並保存
+fn get_student_id_input(save_file: &str) -> String {
+    loop {
+        let input = read_input("\n請輸入您的學號（用於接收課程空缺通知）: ");
+        if input.is_empty() {
+            println!("❌ 學號不能為空");
+            continue;
+        }
+        if input.chars().all(|c| c.is_alphanumeric()) {
+            let topic = generate_ntfy_topic(&input);
+            println!("✓ 學號已設定: {}", input);
+            println!("📱 請在手機 ntfy app 中訂閱以下 topic:");
+            println!("   {}", topic);
+            println!("   (這個 topic 是由您的學號加密生成，確保隱私安全)");
+            
+            // 保存學號
+            let _ = std::fs::write(save_file, &input);
+            
+            return input;
+        } else {
+            println!("❌ 學號只能包含字母和數字");
+        }
+    }
+}
+
+/// 發送 ntfy.sh 通知
+async fn send_ntfy_notification(
+    client: &Client,
+    student_id: &str,
+    title: &str,
+    message: &str,
+    priority: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let url = format!("https://ntfy.sh/{}", student_id);
+    
+    let response = client
+        .post(&url)
+        .header("Title", title)
+        .header("Priority", priority.to_string())
+        .header("Tags", "mortar_board,bell")
+        .body(message.to_string())
+        .send()
+        .await?;
+    
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("通知發送失敗: {}", response.status()).into())
+    }
 }
 
 /// 顯示主選單並取得使用者選擇
@@ -244,6 +314,34 @@ async fn monitor_courses() -> bool {
     
     println!("\n當前學期: {}", semester);
     
+    // 讀取上次的學號（如果存在）
+    let last_student_id_file = "last_student_id.txt";
+    let student_id = if std::path::Path::new(last_student_id_file).exists() {
+        if let Ok(content) = std::fs::read_to_string(last_student_id_file) {
+            let last_id = content.trim();
+            if !last_id.is_empty() {
+                let topic = generate_ntfy_topic(last_id);
+                println!("\n上次使用的學號: {}", last_id);
+                println!("對應的 ntfy topic: {}", topic);
+                let use_last = read_input("是否沿用上次的學號？(Y/n): ");
+                if use_last.is_empty() || use_last.to_lowercase() == "y" || use_last.to_lowercase() == "yes" {
+                    last_id.to_string()
+                } else {
+                    get_student_id_input(last_student_id_file)
+                }
+            } else {
+                get_student_id_input(last_student_id_file)
+            }
+        } else {
+            get_student_id_input(last_student_id_file)
+        }
+    } else {
+        get_student_id_input(last_student_id_file)
+    };
+    
+    // 生成 ntfy topic
+    let ntfy_topic = generate_ntfy_topic(&student_id);
+    
     // 讀取上次的課程清單（如果存在）
     let last_courses_file = "last_courses.txt";
     if std::path::Path::new(last_courses_file).exists() {
@@ -254,7 +352,7 @@ async fn monitor_courses() -> bool {
                 let use_last = read_input("是否沿用上次的課程清單？(Y/n): ");
                 if use_last.is_empty() || use_last.to_lowercase() == "y" || use_last.to_lowercase() == "yes" {
                     let course_codes = parse_course_codes(last_courses);
-                    return start_monitoring(&client, &semester, course_codes).await;
+                    return start_monitoring(&client, &semester, course_codes, &ntfy_topic).await;
                 }
             }
         }
@@ -296,7 +394,7 @@ async fn monitor_courses() -> bool {
         // 儲存課程清單
         let _ = std::fs::write(last_courses_file, input.clone());
         
-        return start_monitoring(&client, &semester, course_codes).await;
+        return start_monitoring(&client, &semester, course_codes, &ntfy_topic).await;
     }
 }
 
@@ -347,7 +445,7 @@ fn parse_time_interval(input: &str) -> Option<u64> {
 }
 
 /// 開始監測課程
-async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<String>) -> bool {
+async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<String>, ntfy_topic: &str) -> bool {
     // 詢問查詢間隔
     let interval = loop {
         let input = read_input("\n請輸入查詢間隔（預設 5 秒，按 Enter 使用預設值）\n支援格式: 數字(秒), 3h(小時), 10m(分鐘), 1h30m(組合): ");
@@ -371,8 +469,20 @@ async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<Str
         println!("  - {}", code);
     }
     println!("查詢間隔: {} 秒（含隨機延遲 ±2 秒）", interval);
+    println!("通知設定: 發現空缺後每 5 分鐘通知一次，最多 12 次");
+    println!("通知 Topic: {}", ntfy_topic);
     println!("提示: 等待期間輸入 Q 然後按 Enter 可結束監測");
     println!("========================================\n");
+    
+    // 初始化課程狀態追蹤
+    let mut course_states: HashMap<String, CourseVacancyState> = HashMap::new();
+    for code in &course_codes {
+        course_states.insert(code.clone(), CourseVacancyState {
+            had_vacancy: false,
+            notification_count: 0,
+            last_notification_time: None,
+        });
+    }
     
     // 創建共享的退出信號
     let quit_signal = Arc::new(AtomicBool::new(false));
@@ -422,12 +532,77 @@ async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<Str
                         vacancy_symbol
                     );
                     
-                    // 如果有空缺，發出提醒
+                    // 獲取課程狀態
+                    let state = course_states.get_mut(course_code).unwrap();
+                    let now = Instant::now();
+                    
+                    // 檢查是否需要發送通知
                     if has_vacancy {
+                        // 如果有空缺
                         play_beep();
                         show_visual_alert(course_code);
                         play_beep();
                         play_beep();
+                        
+                        // 檢查是否需要發送 ntfy 通知
+                        let should_notify = if !state.had_vacancy {
+                            // 剛發現空缺，立即通知
+                            true
+                        } else if state.notification_count < 12 {
+                            // 已經有空缺，檢查是否過了 5 分鐘
+                            if let Some(last_time) = state.last_notification_time {
+                                now.duration_since(last_time) >= Duration::from_secs(300) // 5 分鐘
+                            } else {
+                                true
+                            }
+                        } else {
+                            false
+                        };
+                        
+                        if should_notify {
+                            state.notification_count += 1;
+                            state.last_notification_time = Some(now);
+                            
+                            let title = format!("🎓 {} 有空缺！", course_code);
+                            let message = format!(
+                                "課程名稱: {}\n上課時間: {}\n選課人數: {}/{}\n\n通知次數: {}/12",
+                                course.course_name,
+                                course.node,
+                                current_students,
+                                limit,
+                                state.notification_count
+                            );
+                            
+                            match send_ntfy_notification(client, ntfy_topic, &title, &message, 4).await {
+                                Ok(_) => println!("  📱 已發送通知 ({}/12)", state.notification_count),
+                                Err(e) => eprintln!("  ⚠️  通知發送失敗: {}", e),
+                            }
+                        }
+                        
+                        state.had_vacancy = true;
+                    } else {
+                        // 如果沒有空缺
+                        if state.had_vacancy {
+                            // 之前有空缺，現在沒有了，發送通知
+                            let title = format!("❌ {} 已滿額", course_code);
+                            let message = format!(
+                                "課程名稱: {}\n上課時間: {}\n選課人數: {}/{}\n\n該課程已被選滿，請繼續關注其他時段",
+                                course.course_name,
+                                course.node,
+                                current_students,
+                                limit
+                            );
+                            
+                            match send_ntfy_notification(client, ntfy_topic, &title, &message, 3).await {
+                                Ok(_) => println!("  📱 已發送『課程已滿』通知"),
+                                Err(e) => eprintln!("  ⚠️  通知發送失敗: {}", e),
+                            }
+                            
+                            // 重置狀態
+                            state.had_vacancy = false;
+                            state.notification_count = 0;
+                            state.last_notification_time = None;
+                        }
                     }
                 }
                 Err(e) => {
