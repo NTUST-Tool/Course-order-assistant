@@ -7,6 +7,9 @@ use std::process::exit;
 use std::time::Duration;
 use tokio::time::sleep;
 use rand::Rng;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use tabled::{
     Table,
     settings::{
@@ -111,8 +114,12 @@ fn play_beep() {
 /// 顯示視覺提醒
 fn show_visual_alert(course_code: &str) {
     println!("\n{}", "\\".repeat(50));
+    println!("{}", "\\".repeat(50));
+    println!("{}", "\\".repeat(50));
     println!("🔔 課程有空缺！ 🔔");
     println!("課程代碼: {}", course_code);
+    println!("{}", "/".repeat(50));
+    println!("{}", "/".repeat(50));
     println!("{}", "/".repeat(50));
 }
 
@@ -221,8 +228,31 @@ async fn get_course_info_with_retry(
     }
 }
 
+/// 帶倒數計時的等待函數，檢查共享的退出信號
+async fn countdown_with_quit_option(duration: Duration, quit_signal: &Arc<AtomicBool>) -> bool {
+    let total_millis = duration.as_millis() as u64;
+    let steps = (total_millis / 100).max(1); // 每0.1秒更新一次
+    
+    // 倒數循環
+    for i in 0..steps {
+        if quit_signal.load(Ordering::Relaxed) {
+            println!(); // 換行
+            return false; // 用戶按了Q
+        }
+        
+        let remaining = (steps - i) as f64 * 0.1;
+        print!("\r倒數計時: {:.1} 秒 | 輸入 Q 然後按 Enter 結束監測", remaining);
+        io::stdout().flush().unwrap();
+        
+        sleep(Duration::from_millis(100)).await;
+    }
+    
+    println!(); // 換行
+    true // 正常完成倒數
+}
+
 /// 課程監測功能
-async fn monitor_courses() {
+async fn monitor_courses() -> bool {
     let client = Client::new();
     
     // 取得學期資訊
@@ -230,8 +260,7 @@ async fn monitor_courses() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("❌ 無法取得學期資訊: {}", e);
-            wait_exit_with_code(1);
-            return;
+            return false;
         }
     };
     
@@ -247,8 +276,7 @@ async fn monitor_courses() {
                 let use_last = read_input("是否沿用上次的課程清單？(Y/n): ");
                 if use_last.is_empty() || use_last.to_lowercase() == "y" || use_last.to_lowercase() == "yes" {
                     let course_codes = parse_course_codes(last_courses);
-                    start_monitoring(&client, &semester, course_codes).await;
-                    return;
+                    return start_monitoring(&client, &semester, course_codes).await;
                 }
             }
         }
@@ -283,32 +311,79 @@ async fn monitor_courses() {
             if retry.is_empty() || retry.to_lowercase() == "y" || retry.to_lowercase() == "yes" {
                 continue;
             } else {
-                wait_exit_with_code(0);
-                return;
+                return false; // 返回主選單
             }
         }
         
         // 儲存課程清單
         let _ = std::fs::write(last_courses_file, input.clone());
         
-        start_monitoring(&client, &semester, course_codes).await;
-        break;
+        return start_monitoring(&client, &semester, course_codes).await;
+    }
+}
+
+/// 解析時間間隔輸入（支持h=小時, m=分鐘）
+fn parse_time_interval(input: &str) -> Option<u64> {
+    let input = input.trim().to_lowercase();
+    
+    // 解析格式如: 3h, 10m, 1h30m, 2h30m50
+    let mut total_seconds: u64 = 0;
+    let mut current_number = String::new();
+    
+    for ch in input.chars() {
+        if ch.is_ascii_digit() {
+            current_number.push(ch);
+        } else if ch == 'h' {
+            if let Ok(hours) = current_number.parse::<u64>() {
+                total_seconds += hours * 3600;
+                current_number.clear();
+            } else {
+                return None;
+            }
+        } else if ch == 'm' {
+            if let Ok(minutes) = current_number.parse::<u64>() {
+                total_seconds += minutes * 60;
+                current_number.clear();
+            } else {
+                return None;
+            }
+        } else if !ch.is_whitespace() {
+            return None; // 無效字符
+        }
+    }
+    
+    // 處理剩餘的數字（視為秒數）
+    if !current_number.is_empty() {
+        if let Ok(seconds) = current_number.parse::<u64>() {
+            total_seconds += seconds;
+        } else {
+            return None;
+        }
+    }
+    
+    if total_seconds > 0 && total_seconds <= 86400 {
+        Some(total_seconds)
+    } else {
+        None
     }
 }
 
 /// 開始監測課程
-async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<String>) {
+async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<String>) -> bool {
     // 詢問查詢間隔
     let interval = loop {
-        let input = read_input("\n請輸入查詢間隔（秒數，預設 5 秒，按 Enter 使用預設值）: ");
+        let input = read_input("\n請輸入查詢間隔（預設 5 秒，按 Enter 使用預設值）\n支援格式: 數字(秒), 3h(小時), 10m(分鐘), 1h30m(組合): ");
         
         if input.is_empty() {
             break 5;
         }
         
-        match input.parse::<u64>() {
-            Ok(n) if n > 0 && n <= 3600 => break n,
-            _ => println!("❌ 請輸入 1-3600 之間的數字"),
+        match parse_time_interval(&input) {
+            Some(n) => {
+                println!("✓ 已設定查詢間隔: {} 秒", n);
+                break n;
+            }
+            None => println!("❌ 無效的時間格式，請重新輸入"),
         }
     };
     
@@ -318,12 +393,36 @@ async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<Str
         println!("  - {}", code);
     }
     println!("查詢間隔: {} 秒（含隨機延遲 ±2 秒）", interval);
-    println!("按 Ctrl+C 結束監測");
+    println!("提示: 等待期間輸入 Q 然後按 Enter 可結束監測");
     println!("========================================\n");
+    
+    // 創建共享的退出信號
+    let quit_signal = Arc::new(AtomicBool::new(false));
+    let quit_signal_clone = quit_signal.clone();
+    
+    // 啟動單一的鍵盤監聽執行緒，在整個監測期間持續運行
+    let input_thread = thread::spawn(move || {
+        let stdin = io::stdin();
+        loop {
+            let mut buffer = String::new();
+            if let Ok(_) = stdin.read_line(&mut buffer) {
+                let input = buffer.trim().to_lowercase();
+                if input == "q" {
+                    quit_signal_clone.store(true, Ordering::Relaxed);
+                    break; // 退出輸入監聽迴圈
+                }
+            }
+        }
+    });
     
     let mut iteration = 0;
     
     loop {
+        // 檢查是否在查詢前就收到退出信號
+        if quit_signal.load(Ordering::Relaxed) {
+            break;
+        }
+        
         iteration += 1;
         println!("\n[第 {} 次查詢] {}", iteration, chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
         println!("{}", "-".repeat(80));
@@ -366,12 +465,23 @@ async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<Str
         let wait_duration = Duration::from_secs_f64(wait_time.max(1.0));
         
         println!("\n等待 {:.1} 秒後進行下次查詢...", wait_time);
-        sleep(wait_duration).await;
+        
+        // 帶倒數計時的等待，檢查退出信號
+        if !countdown_with_quit_option(wait_duration, &quit_signal).await {
+            break;
+        }
     }
+    
+    // 等待輸入執行緒結束（最多等待1秒）
+    // 由於執行緒可能還在 read_line 阻塞中，我們不強制等待它完成
+    drop(input_thread);
+    
+    println!("\n✓ 已停止監測，返回主選單...");
+    false // 返回false表示用戶主動退出或結束
 }
 
 /// 原始選課分析功能
-async fn run_original_analysis(file_path: String) {
+async fn run_original_analysis(file_path: String) -> bool {
     let file_content = std::fs::read_to_string(&file_path)
         .unwrap_or_else(|_| {
             eprintln!("❌ 檔案開啟失敗: {}", file_path);
@@ -456,43 +566,48 @@ async fn run_original_analysis(file_path: String) {
 
     println!("{}", unsafe_part_table);
 
-    wait_exit_with_code(0);
+    // 等待用戶按Enter後返回主選單
+    let _ = read_input("\n按 Enter 鍵返回主選單...");
+    true // 返回主選單
 }
 
 #[tokio::main]
 async fn main() {
-    // 顯示主選單
-    let choice = show_main_menu();
-    
-    match choice {
-        0 => {
-            println!("👋 再見！");
-            exit(0);
-        }
-        1 => {
-            // 原始選課分析功能
-            let file_path = match get_path() {
-                Some(path) => path,
-                None => {
-                    let path = read_input("\n請輸入 HTML 檔案路徑: ");
-                    if path.is_empty() {
-                        eprintln!("❌ 未提供檔案路徑");
-                        wait_exit_with_code(1);
-                        return;
+    // 主循環：不斷顯示選單直到用戶選擇退出
+    loop {
+        let choice = show_main_menu();
+        
+        match choice {
+            0 => {
+                println!("👋 再見！");
+                exit(0);
+            }
+            1 => {
+                // 原始選課分析功能
+                let file_path = match get_path() {
+                    Some(path) => path,
+                    None => {
+                        let path = read_input("\n請輸入 HTML 檔案路徑: ");
+                        if path.is_empty() {
+                            eprintln!("❌ 未提供檔案路徑");
+                            continue; // 返回主選單
+                        }
+                        path
                     }
-                    path
-                }
-            };
-            
-            run_original_analysis(file_path).await;
-        }
-        2 => {
-            // 課程監測功能
-            monitor_courses().await;
-        }
-        _ => {
-            println!("❌ 無效的選項");
-            wait_exit_with_code(1);
+                };
+                
+                run_original_analysis(file_path).await;
+                // 執行完畢後會自動返回主選單
+            }
+            2 => {
+                // 課程監測功能
+                monitor_courses().await;
+                // 執行完畢後會自動返回主選單
+            }
+            _ => {
+                println!("❌ 無效的選項");
+                // 繼續循環，不退出
+            }
         }
     }
 }
