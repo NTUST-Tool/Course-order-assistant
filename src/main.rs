@@ -29,28 +29,6 @@ struct Args {
     file_path: Option<String>,
 }
 
-trait ResultExt<T, E> {
-    fn wrap_or_exit<F>(self, err_msg: F) -> T
-    where
-        F: Into<String>;
-}
-
-impl<T, E> ResultExt<T, E> for Result<T, E>
-where
-    E: std::fmt::Debug,
-{
-    fn wrap_or_exit<F>(self, err_msg: F) -> T
-    where
-        F: Into<String>,
-    {
-        self.unwrap_or_else(|err| {
-            println!("錯誤: {}", err_msg.into());
-            println!("詳細資料: {:?}", err);
-            wait_exit_with_code(1);
-            panic!("for type checking");
-        })
-    }
-}
 fn get_path() -> Option<String> {
     let matches = Args::command().try_get_matches();
     if let Err(err) = &matches {
