@@ -12,7 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::collections::HashMap;
 use std::time::Instant;
-use md5;
+use sha2::{Sha256, Digest};
+use machineid_rs;
 use tabled::{
     Table,
     settings::{
@@ -121,12 +122,26 @@ fn read_input(prompt: &str) -> String {
     input.trim().to_string()
 }
 
-/// 根據學號生成 ntfy topic (學號_MD5後4位)
+/// 根據學號生成 ntfy topic (學號_SHA256後6位)
 fn generate_ntfy_topic(student_id: &str) -> String {
-    let digest = md5::compute(student_id.as_bytes());
-    let hash = format!("{:x}", digest);
-    let last_4 = &hash[hash.len()-4..];
-    format!("{}_{}", student_id, last_4)
+    // 獲取機器唯一識別碼作為 salt（不需要 UAC 或 root 權限）
+    // 使用 HWIDComponent 添加硬體資訊
+    use machineid_rs::{IdBuilder, Encryption, HWIDComponent};
+    
+    let machine_id = IdBuilder::new(Encryption::SHA256)
+        .add_component(HWIDComponent::SystemID)
+        .build("ntfy-topic")
+        .unwrap_or_else(|_| "default-machine-id".to_string());
+    
+    // 使用學號 + 機器 ID 作為 salt 進行 SHA-256 加密
+    let combined = format!("{}{}", student_id, machine_id);
+    let mut hasher = Sha256::new();
+    hasher.update(combined.as_bytes());
+    let result = hasher.finalize();
+    let hash = format!("{:x}", result);
+    let last_6 = &hash[hash.len()-6..];
+    
+    format!("{}_{}", student_id, last_6)
 }
 
 /// 獲取學號輸入並保存
@@ -142,7 +157,7 @@ fn get_student_id_input(save_file: &str) -> String {
             println!("✓ 學號已設定: {}", input);
             println!("📱 請在手機 ntfy app 中訂閱以下 topic:");
             println!("   {}", topic);
-            println!("   (這個 topic 是由您的學號加密生成，確保隱私安全)");
+            println!("   (這個 topic 是由您的學號 + 本機硬體資訊加密生成，確保只有您在這台電腦上能產生相同 topic)");
             
             // 保存學號
             let _ = std::fs::write(save_file, &input);
@@ -612,8 +627,8 @@ async fn start_monitoring(client: &Client, semester: &str, course_codes: Vec<Str
         }
         
         // 隨機延遲（模擬真人行為）
-        let mut rng = rand::thread_rng();
-        let jitter: f64 = rng.gen_range(-2.0..3.0);
+        let mut rng = rand::rng();
+        let jitter: f64 = rng.random_range(-2.0..3.0);
         let wait_time = interval as f64 + jitter;
         let wait_duration = Duration::from_secs_f64(wait_time.max(1.0));
         
