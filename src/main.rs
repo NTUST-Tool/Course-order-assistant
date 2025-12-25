@@ -5,6 +5,8 @@ use std::io;
 use std::io::prelude::*;
 use std::process::exit;
 use std::time::Duration;
+use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 use rand::Rng;
 use std::sync::Arc;
@@ -39,6 +41,43 @@ struct CourseVacancyState {
     had_vacancy: bool,              // 上次是否有空缺
     notification_count: u32,        // 已發送通知次數
     last_notification_time: Option<Instant>, // 上次發送通知的時間
+}
+
+/// 設定檔案結構
+#[derive(Serialize, Deserialize, Default)]
+struct AppConfig {
+    student_id: Option<String>,
+    last_courses: Option<String>,
+}
+
+/// 取得設定檔路徑（位於可執行檔所在目錄）
+fn get_config_path() -> PathBuf {
+    let exe_path = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let exe_dir = exe_path.parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    exe_dir.join("course_assistant_config.json")
+}
+
+/// 讀取設定檔
+fn load_config() -> AppConfig {
+    let config_path = get_config_path();
+    if config_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+                return config;
+            }
+        }
+    }
+    AppConfig::default()
+}
+
+/// 儲存設定檔
+fn save_config(config: &AppConfig) {
+    let config_path = get_config_path();
+    if let Ok(json) = serde_json::to_string_pretty(config) {
+        let _ = std::fs::write(&config_path, json);
+    }
 }
 
 fn get_path() -> Option<String> {
@@ -145,7 +184,7 @@ fn generate_ntfy_topic(student_id: &str) -> String {
 }
 
 /// 獲取學號輸入並保存
-fn get_student_id_input(save_file: &str) -> String {
+fn get_student_id_input() -> String {
     loop {
         let input = read_input("\n請輸入您的學號（用於接收課程空缺通知）: ");
         if input.is_empty() {
@@ -159,8 +198,10 @@ fn get_student_id_input(save_file: &str) -> String {
             println!("   {}", topic);
             println!("   (這個 topic 是由您的學號 + 本機硬體資訊加密生成，確保只有您在這台電腦上能產生相同 topic)");
             
-            // 保存學號
-            let _ = std::fs::write(save_file, &input);
+            // 保存學號到設定檔
+            let mut config = load_config();
+            config.student_id = Some(input.clone());
+            save_config(&config);
             
             return input;
         } else {
@@ -329,46 +370,39 @@ async fn monitor_courses() -> bool {
     
     println!("\n當前學期: {}", semester);
     
+    // 讀取設定檔
+    let config = load_config();
+    
     // 讀取上次的學號（如果存在）
-    let last_student_id_file = "last_student_id.txt";
-    let student_id = if std::path::Path::new(last_student_id_file).exists() {
-        if let Ok(content) = std::fs::read_to_string(last_student_id_file) {
-            let last_id = content.trim();
-            if !last_id.is_empty() {
-                let topic = generate_ntfy_topic(last_id);
-                println!("\n上次使用的學號: {}", last_id);
-                println!("對應的 ntfy topic: {}", topic);
-                let use_last = read_input("是否沿用上次的學號？(Y/n): ");
-                if use_last.is_empty() || use_last.to_lowercase() == "y" || use_last.to_lowercase() == "yes" {
-                    last_id.to_string()
-                } else {
-                    get_student_id_input(last_student_id_file)
-                }
+    let student_id = if let Some(last_id) = config.student_id.as_ref() {
+        if !last_id.is_empty() {
+            let topic = generate_ntfy_topic(last_id);
+            println!("\n上次使用的學號: {}", last_id);
+            println!("對應的 ntfy topic: {}", topic);
+            let use_last = read_input("是否沿用上次的學號？(Y/n): ");
+            if use_last.is_empty() || use_last.to_lowercase() == "y" || use_last.to_lowercase() == "yes" {
+                last_id.to_string()
             } else {
-                get_student_id_input(last_student_id_file)
+                get_student_id_input()
             }
         } else {
-            get_student_id_input(last_student_id_file)
+            get_student_id_input()
         }
     } else {
-        get_student_id_input(last_student_id_file)
+        get_student_id_input()
     };
     
     // 生成 ntfy topic
     let ntfy_topic = generate_ntfy_topic(&student_id);
     
     // 讀取上次的課程清單（如果存在）
-    let last_courses_file = "last_courses.txt";
-    if std::path::Path::new(last_courses_file).exists() {
-        if let Ok(content) = std::fs::read_to_string(last_courses_file) {
-            let last_courses = content.trim();
-            if !last_courses.is_empty() {
-                println!("\n上次查詢的課程清單: {}", last_courses);
-                let use_last = read_input("是否沿用上次的課程清單？(Y/n): ");
-                if use_last.is_empty() || use_last.to_lowercase() == "y" || use_last.to_lowercase() == "yes" {
-                    let course_codes = parse_course_codes(last_courses);
-                    return start_monitoring(&client, &semester, course_codes, &ntfy_topic).await;
-                }
+    if let Some(last_courses) = config.last_courses.as_ref() {
+        if !last_courses.is_empty() {
+            println!("\n上次查詢的課程清單: {}", last_courses);
+            let use_last = read_input("是否沿用上次的課程清單？(Y/n): ");
+            if use_last.is_empty() || use_last.to_lowercase() == "y" || use_last.to_lowercase() == "yes" {
+                let course_codes = parse_course_codes(last_courses);
+                return start_monitoring(&client, &semester, course_codes, &ntfy_topic).await;
             }
         }
     }
@@ -406,8 +440,10 @@ async fn monitor_courses() -> bool {
             }
         }
         
-        // 儲存課程清單
-        let _ = std::fs::write(last_courses_file, input.clone());
+        // 儲存課程清單到設定檔
+        let mut config = load_config();
+        config.last_courses = Some(input.clone());
+        save_config(&config);
         
         return start_monitoring(&client, &semester, course_codes, &ntfy_topic).await;
     }
