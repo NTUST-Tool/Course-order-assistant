@@ -45,11 +45,11 @@
 #### 步驟 1：準備選課清單檔案
 1. 登入選課系統，打開你的選課清單
    
-   ![image](https://github.com/NTUST-Tool/Course-order-assistant/assets/54392299/06ee9b2e-0bc5-46c4-a886-e62bfff529e1)
+   ![image](ReadMeFiles/course.png)
 
 2. 按下 `Ctrl+S`（Mac: `Cmd+S`），存檔類型選擇 **純 HTML**
    
-   ![image](https://github.com/NTUST-Tool/Course-order-assistant/assets/54392299/a48d1e87-0bbf-4ea0-a62a-a5e6aabbda7c)
+   ![image](ReadMeFiles/saveHtml.png)
 
 #### 步驟 2：執行程式分析
 
