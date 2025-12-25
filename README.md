@@ -28,15 +28,15 @@
 - 🕐 **彈性設定**：支援秒/分/小時的查詢間隔（如：5、30m、2h）
 
 ---
-<!--
+
 ## 📥 下載連結
 
-| **Windows** | **Linux** | **MacOS Apple Silicon** | **MacOS Intel Core** |
+| **Windows** | **MacOS Universal** | **MacOS Apple Silicon** | **MacOS Intel Core** |
 |:---:|:---:|:---:|:---:|
-| [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant.exe) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant-linux.zip) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant-macos-arm64.zip) | [下載](https://github.com/NTUST-Tool/Course-order-assistant/releases/latest/download/Course-order-assistant-macos-amd64.zip) |
+| [下載](https://github.com/jamie950315/Course-order-assistant_Pro-Max/releases/latest/download/Course-order-assistant_Windows_x86-64.exe) | [下載](https://github.com/jamie950315/Course-order-assistant_Pro-Max/releases/latest/download/Course-order-assistant_macOS_Universal) | [下載](https://github.com/jamie950315/Course-order-assistant_Pro-Max/releases/latest/download/Course-order-assistant_macOS_arm64) | [下載](https://github.com/jamie950315/Course-order-assistant_Pro-Max/releases/latest/download/Course-order-assistant_macOS_x86-64) |
 
 ---
--->
+
 
 ## 📖 使用教學
 
