@@ -31,7 +31,7 @@
 
 ## 📥 下載連結
 
-| **Windows** | **MacOS Universal** | **MacOS Apple Silicon** | **MacOS Intel Core** |
+| **Windows** | **macOS Universal** | **macOS Apple Silicon** | **macOS Intel Core** |
 |:---:|:---:|:---:|:---:|
 | [下載](https://github.com/jamie950315/Course-order-assistant_Pro-Max/releases/latest/download/Course-order-assistant_Windows_x86-64.exe) | [下載](https://github.com/jamie950315/Course-order-assistant_Pro-Max/releases/latest/download/Course-order-assistant_macOS_Universal) | [下載](https://github.com/jamie950315/Course-order-assistant_Pro-Max/releases/latest/download/Course-order-assistant_macOS_arm64) | [下載](https://github.com/jamie950315/Course-order-assistant_Pro-Max/releases/latest/download/Course-order-assistant_macOS_x86-64) |
 
