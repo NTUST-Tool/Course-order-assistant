@@ -21,7 +21,7 @@ serde_json = "1.0"
 tabled = "0.20.0"
 regex = "1.12.3"
 kdam = { version = "0.6.4", features = ["spinner", "template"] }
-futures = "0.3.31"
+futures = "0.3.32"
 scraper = "0.25.0"
 anyhow = "1.0.101"
 mailparse = "0.16.1"
