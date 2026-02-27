@@ -55,7 +55,7 @@ jobs:
           cargo build --release --target x86_64-unknown-linux-musl
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.os }}-Build
           path: |
