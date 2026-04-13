@@ -130,7 +130,7 @@ jobs:
             }
 
       - name: Upload Release Asset macos-latest
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.get_latest_release.outputs.release_tag }}
           files: |
