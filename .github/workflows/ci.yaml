@@ -73,7 +73,7 @@ jobs:
     steps:
       - name: Get latest release
         id: get_latest_release
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -110,7 +110,7 @@ jobs:
         run: ls -R
 
       - name: Delete existing release assets
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
