@@ -1,4 +1,3 @@
-
 use serde::{Deserialize, Deserializer};
 use tabled::Tabled;
 
