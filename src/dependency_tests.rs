@@ -1,6 +1,80 @@
 use crate::core;
 
 #[tokio::test]
+#[ignore = "Publishes one synthetic message to a random public ntfy.sh topic; requires explicit approval"]
+async fn live_ntfy_subscription_roundtrip() {
+    let mut config = crate::AppConfig::default();
+    let topic = crate::ensure_ntfy_topic(&mut config).to_string();
+    let client = crate::http_client().unwrap();
+    let mut subscription = client
+        .get(format!("https://ntfy.sh/{topic}/json"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let mut pending = Vec::new();
+    let open = next_ntfy_event(&mut subscription, &mut pending).await;
+    assert_eq!(open["event"], "open");
+
+    let title = "🎓 選課助理通知測試";
+    let message = format!(
+        "Smoke test only — 中文通知正常。 Test ID: {}",
+        rand::random::<u64>()
+    );
+    let mut state = crate::CourseVacancyState::default();
+    crate::send_vacancy_notification(
+        &client,
+        "https://ntfy.sh",
+        &topic,
+        title,
+        &message,
+        &mut state,
+    )
+    .await
+    .unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let event = next_ntfy_event(&mut subscription, &mut pending).await;
+            if event["event"] == "message" {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("subscription did not receive notification");
+    assert_eq!(event["title"], title);
+    assert_eq!(event["message"], message);
+    assert_eq!(event["priority"], 4);
+    assert_eq!(event["tags"], serde_json::json!(["mortar_board", "bell"]));
+    assert_eq!(state.notification_count, 1);
+    println!(
+        "PASS: ntfy subscription opened before publishing; received matching Chinese title/body, priority and tags; success count = 1. Topic withheld."
+    );
+}
+
+async fn next_ntfy_event(
+    response: &mut reqwest::Response,
+    pending: &mut Vec<u8>,
+) -> serde_json::Value {
+    loop {
+        if let Some(end) = pending.iter().position(|&b| b == b'\n') {
+            let line: Vec<_> = pending.drain(..=end).collect();
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            return serde_json::from_slice(&line).expect("invalid subscription event");
+        }
+        let chunk = response
+            .chunk()
+            .await
+            .unwrap()
+            .expect("subscription closed unexpectedly");
+        pending.extend_from_slice(&chunk);
+    }
+}
+
+#[tokio::test]
 #[ignore = "Requires access to the live NTUST course API"]
 async fn live_semester_https_request() {
     let client = reqwest::Client::builder()
@@ -151,9 +225,13 @@ fn random_topics_persist_and_config_errors_are_reported() {
     let path = dir.join("config.json");
     let mut config = crate::load_config_from(&path).unwrap();
     let topic = crate::ensure_ntfy_topic(&mut config).to_string();
-    assert_eq!(topic.len(), 71);
-    assert!(topic.starts_with("course-"));
-    assert!(topic[7..].bytes().all(|b| b.is_ascii_hexdigit()));
+    assert_eq!(topic.len(), 64);
+    assert!(topic.bytes().all(|b| b.is_ascii_hexdigit()));
+    let mut oversized = crate::AppConfig {
+        ntfy_topic: Some(format!("course-{topic}")),
+        ..Default::default()
+    };
+    assert_eq!(crate::ensure_ntfy_topic(&mut oversized), topic);
     assert_eq!(crate::ensure_ntfy_topic(&mut config), topic);
     let mut other = crate::AppConfig::default();
     assert_ne!(crate::ensure_ntfy_topic(&mut other), topic);

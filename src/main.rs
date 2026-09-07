@@ -176,12 +176,17 @@ async fn wait_for_quit(receiver: &Mutex<mpsc::Receiver<io::Result<String>>>) {
 }
 
 fn ensure_ntfy_topic(config: &mut AppConfig) -> &str {
+    // Repair the unreleased 71-character format without reducing its randomness.
+    if let Some(topic) = config.ntfy_topic.as_mut()
+        && topic.len() == 71
+        && topic.starts_with("course-")
+        && topic[7..].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        topic.drain(..7);
+    }
     config.ntfy_topic.get_or_insert_with(|| {
         let bytes: [u8; 32] = rand::rng().random();
-        format!(
-            "course-{}",
-            bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
-        )
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
     })
 }
 
@@ -353,8 +358,9 @@ async fn monitor_courses() -> anyhow::Result<()> {
     println!("\n當前學期: {semester}");
     let path = get_config_path()?;
     let mut config = load_config_from(&path)?;
-    let migrated = config.ntfy_topic.is_none();
+    let previous_topic = config.ntfy_topic.clone();
     let topic = ensure_ntfy_topic(&mut config).to_string();
+    let migrated = previous_topic.as_deref() != Some(&topic);
     save_config_to(&path, &config)?;
     if migrated {
         println!("通知頻道已升級，請在 ntfy app 重新訂閱下方頻道。");

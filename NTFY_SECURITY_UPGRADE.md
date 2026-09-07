@@ -11,7 +11,7 @@ Notifications now use a randomly generated 256-bit topic, stored in `course_assi
 
 ## Privacy limits
 
-The topic has the form `course-` followed by 64 random hexadecimal characters. Keep it and the configuration private. Unix configuration files are restricted to the owner; on Windows, access follows the containing directory's permissions.
+The topic consists of 64 random hexadecimal characters, matching ntfy's 64-character maximum. Earlier unreleased 71-character topics are repaired by removing the `course-` prefix; re-subscribe if that format was previously saved. Keep it and the configuration private. Unix configuration files are restricted to the owner; on Windows, access follows the containing directory's permissions.
 
 A random topic is difficult to guess, but it is not encryption or authentication. Anyone who obtains the topic may be able to subscribe or publish. The ntfy service receives notification content; do not include sensitive information. Older MD5/SHA-256 and hardware-binding security claims are obsolete.
 

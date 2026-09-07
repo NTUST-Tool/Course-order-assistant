@@ -110,7 +110,7 @@ Topics are not encryption or authentication. Keep yours private: anyone who obta
 1. 打開 ntfy app
 ![image](ReadMeFiles/appMain.jpeg)
 2. 點擊右上角「+」
-3. 輸入程式顯示的 topic（例如：`course-<64 random hex characters>`）
+3. 輸入程式顯示的 topic（例如：`<64 random hex characters>`）
 ![image](ReadMeFiles/addTopic.jpeg)
 4. 點擊「訂閱」
 5. ✅ 完成！
@@ -153,7 +153,7 @@ Topics are not encryption or authentication. Keep yours private: anyone who obta
   - EE3603301
 查詢間隔: 5 秒（含隨機延遲 ±2 秒）
 通知設定: 發現空缺後每 5 分鐘通知一次，最多 12 次
-通知 Topic: course-<64 random hex characters>
+通知 Topic: <64 random hex characters>
 提示: 隨時輸入 Q 然後按 Enter 可結束監測
 ========================================
 
@@ -400,3 +400,5 @@ chmod +x Course-order-assistant
 Run `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo build --release --locked`. Tests use loopback notification servers, never public topics. The ignored live school API test can be run with `cargo test --locked live_semester_https_request -- --ignored --nocapture`.
 
 Requests have a 10-second connection timeout and a 20-second total timeout. Q then Enter cancels active monitoring, including requests and retries. Only successful vacancy notifications count toward the five-minute spacing and limit of 12; failures remain eligible at the next poll. Oversized intervals are rejected. See [notification migration](NTFY_SECURITY_UPGRADE.md) for upgrade and privacy details.
+
+An explicitly approved live ntfy smoke test is available: `cargo test --locked live_ntfy_subscription_roundtrip -- --ignored --nocapture`. It opens a streaming subscription, publishes one synthetic notification through the production sender, and checks the received title, body, priority and tags. It does not test mobile push delivery. Default test runs never publish externally.
