@@ -1,3 +1,4 @@
 /target
 *html
 .DS_Store
+course_assistant_config.json

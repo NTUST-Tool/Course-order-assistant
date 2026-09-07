@@ -20,10 +20,10 @@
 ### 🔍 功能二：即時課程監測 ⭐ **最新功能**
 - 🔔 **即時監測**：持續追蹤指定課程的選課狀況
 - 📱 **手機推送**：透過 ntfy.sh 發送課程空缺通知到手機
-- 🔐 **隱私保護**：使用學號加密生成專屬通知 topic
+- 🔐 **Notification privacy**: persistent random topics; no student ID or hardware fingerprint required.
 - ⏰ **智能提醒**：發現空缺後每 5 分鐘通知一次（最多 12 次）
 - 🎯 **多課程支援**：同時監測多門課程
-- 💾 **記憶功能**：自動記住學號和課程清單
+- 💾 **Saved settings**: retain the notification topic and course list.
 - ⌨️ **快速退出**：按 Q 鍵隨時停止監測
 - 🕐 **彈性設定**：支援秒/分/小時的查詢間隔（如：5、30m、2h）
 
@@ -92,19 +92,13 @@ Course-order-assistant.exe 選課清單.html
 2. 選擇功能 [2] 執行課程監測功能
 ```
 
-#### 步驟 2：設定學號（首次使用）
-```
-請輸入您的學號（用於接收課程空缺通知）: B11XXX345
-✓ 學號已設定: B11XXX345
-📱 請在手機 ntfy app 中訂閱以下 topic:
-   B11XXX345_7f8e2a
-   (這個 topic 是由您的學號 + 本機硬體資訊加密生成，確保只有您在這台電腦上能產生相同 topic)
-```
+#### Step 2: Subscribe to your notification topic
 
-> 💡 **為什麼需要學號？**
-> - 用於生成專屬的 ntfy.sh 通知 topic
-> - 格式：`學號_SHA256後6位`（例如：B11XXX345_7f8e2a）
-> - 確保隱私和安全，防止他人誤訂閱或偽造 topic
+The application generates and saves a random topic on first use. Copy the full displayed topic into ntfy; do not use the abbreviated examples below.
+
+**Upgrading from an older version requires re-subscribing once.** The old student-ID topic is no longer used. Keep `course_assistant_config.json` beside the executable to retain the new topic.
+
+Topics are not encryption or authentication. Keep yours private: anyone who obtains it may be able to subscribe or publish.
 
 #### 步驟 3：設定手機通知（首次使用）
 
@@ -116,7 +110,7 @@ Course-order-assistant.exe 選課清單.html
 1. 打開 ntfy app
 ![image](ReadMeFiles/appMain.jpeg)
 2. 點擊右上角「+」
-3. 輸入程式顯示的 topic（例如：`B11XXX345_7f8e2a`）
+3. 輸入程式顯示的 topic（例如：`course-<64 random hex characters>`）
 ![image](ReadMeFiles/addTopic.jpeg)
 4. 點擊「訂閱」
 5. ✅ 完成！
@@ -159,8 +153,8 @@ Course-order-assistant.exe 選課清單.html
   - EE3603301
 查詢間隔: 5 秒（含隨機延遲 ±2 秒）
 通知設定: 發現空缺後每 5 分鐘通知一次，最多 12 次
-通知 Topic: B11XXX345_7f8e2a
-提示: 等待期間輸入 Q 然後按 Enter 可結束監測
+通知 Topic: course-<64 random hex characters>
+提示: 隨時輸入 Q 然後按 Enter 可結束監測
 ========================================
 
 [第 1 次查詢] 2025-12-24 14:30:15
@@ -209,12 +203,9 @@ EE3603301 | 信號與系統 | 選課人數: 60/60 | ❌ 已滿
 ### 💾 自動記憶功能
 程式會自動記住您的設定：
 
-**📌 學號記憶**
-```
-上次使用的學號: B11XXX345
-對應的 ntfy topic: B11XXX345_7f8e2a
-是否沿用上次的學號？(Y/n): y
-```
+**Persistent notification topic**
+
+The saved random topic is reused automatically. Student IDs are no longer requested or stored. Configuration read/write failures are reported rather than silently ignored.
 
 **📌 課程清單記憶**
 ```
@@ -259,8 +250,7 @@ q [Enter] ← 輸入 q 並按 Enter
 ### 🛡️ 智能容錯機制
 
 **網路重試：**
-- 自動重試最多 3 次
-- 使用指數退避策略（2秒 → 4秒 → 8秒）
+- Up to three attempts, with two- and four-second waits between attempts.
 - 失敗時顯示詳細錯誤訊息
 
 **代碼驗證：**
@@ -313,14 +303,9 @@ q [Enter] ← 輸入 q 並按 Enter
 - ✅ 正常的 HTTP 請求
 - ⚠️ 建議不要設定過短的間隔（< 3 秒）
 
-### ❓ Q6: 學號會外洩嗎？
+### Q6: Are notifications private?
 
-**A:** 不會！
-- 🔐 topic 使用 SHA-256 加密（學號_SHA256後6位）
-- 🔐 加密過程結合本機硬體資訊作為 salt
-- 🔐 只有在同一台電腦上知道完整學號才能生成正確 topic
-- 🔐 別人無法通過學號偽造 topic
-- 🔐 資料僅存在本地檔案，不上傳伺服器
+The topic contains no student ID and uses 256 random bits. This makes guessing impractical, but does not provide encryption or access control. Anyone with the topic may be able to read or send messages. ntfy receives notification contents. Keep the configuration file and topic private.
 
 ### ❓ Q7: macOS 如何執行？
 
@@ -371,11 +356,11 @@ chmod +x Course-order-assistant
 - ⚡ **非同步架構**：高效能並發查詢
 - 🔄 **自動重試**：網路容錯機制
 - 🎲 **智能延遲**：隨機化避免偵測
-- 💾 **本地儲存**：記憶學號和課程
+- 💾 **Local settings**: persist the random topic and course list.
 - 📱 **推送通知**：整合 ntfy.sh 服務
 - 🖥️ **跨平台**：支援 Windows/macOS
 - 🎨 **友善介面**：清晰的提示和錯誤訊息
-- 🔐 **加密安全**：SHA-256 + 硬體綁定保護學號隱私
+- 🔐 **Random topics**: no student ID or hardware fingerprint; not encryption.
 
 ---
 
@@ -409,3 +394,9 @@ chmod +x Course-order-assistant
 **版本**: 1.5.0  
 **更新日期**: 2025-12-24  
 **主要功能**: 選課分析 + 即時監測 + 手機推送通知 -->
+
+## Verification
+
+Run `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo build --release --locked`. Tests use loopback notification servers, never public topics. The ignored live school API test can be run with `cargo test --locked live_semester_https_request -- --ignored --nocapture`.
+
+Requests have a 10-second connection timeout and a 20-second total timeout. Q then Enter cancels active monitoring, including requests and retries. Only successful vacancy notifications count toward the five-minute spacing and limit of 12; failures remain eligible at the next poll. Oversized intervals are rejected. See [notification migration](NTFY_SECURITY_UPGRADE.md) for upgrade and privacy details.

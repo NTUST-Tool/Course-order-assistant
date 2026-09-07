@@ -1,16 +1,14 @@
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::Parser;
 use kdam::{BarExt, Spinner, tqdm};
 use rand::Rng;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io;
 use std::io::prelude::*;
 use std::path::PathBuf;
 use std::process::exit;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
@@ -39,7 +37,7 @@ struct Args {
 }
 
 /// 課程空缺狀態追蹤
-#[derive(Clone)]
+#[derive(Default)]
 struct CourseVacancyState {
     had_vacancy: bool,                       // 上次是否有空缺
     notification_count: u32,                 // 已發送通知次數
@@ -49,63 +47,41 @@ struct CourseVacancyState {
 /// 設定檔案結構
 #[derive(Serialize, Deserialize, Default)]
 struct AppConfig {
-    student_id: Option<String>,
     last_courses: Option<String>,
+    ntfy_topic: Option<String>,
 }
 
-/// 取得設定檔路徑（位於可執行檔所在目錄）
-fn get_config_path() -> PathBuf {
-    let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-    let exe_dir = exe_path
+fn get_config_path() -> anyhow::Result<PathBuf> {
+    Ok(std::env::current_exe()?
         .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    exe_dir.join("course_assistant_config.json")
+        .ok_or_else(|| anyhow::anyhow!("找不到設定檔目錄"))?
+        .join("course_assistant_config.json"))
 }
 
-/// 讀取設定檔
-fn load_config() -> AppConfig {
-    let config_path = get_config_path();
-    if config_path.exists()
-        && let Ok(content) = std::fs::read_to_string(&config_path)
-        && let Ok(config) = serde_json::from_str::<AppConfig>(&content)
-    {
-        return config;
-    }
-    AppConfig::default()
-}
-
-/// 儲存設定檔
-fn save_config(config: &AppConfig) {
-    let config_path = get_config_path();
-    if let Ok(json) = serde_json::to_string_pretty(config) {
-        let _ = std::fs::write(&config_path, json);
+fn load_config_from(path: &std::path::Path) -> anyhow::Result<AppConfig> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(serde_json::from_str(&content)?),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(AppConfig::default()),
+        Err(e) => Err(e.into()),
     }
 }
 
-fn get_path() -> Option<String> {
-    let matches = Args::command().try_get_matches();
-    if let Err(err) = &matches {
-        let _ = err.print();
-        return None;
-    }
-    let args = Args::from_arg_matches(&matches.unwrap());
-    if let Err(err) = &args {
-        let _ = err.print();
-        return None;
-    }
-
-    args.unwrap().file_path
+fn save_config_to(path: &std::path::Path, config: &AppConfig) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("找不到設定檔目錄"))?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(serde_json::to_string_pretty(config)?.as_bytes())?;
+    file.as_file().sync_all()?;
+    file.persist(path)?;
+    Ok(())
 }
 
-fn wait_exit_with_code(code: i32) {
-    let mut stdin = io::stdin();
-    let mut stdout = io::stdout();
-
-    write!(stdout, "\n按下 Enter 鍵結束執行...\n").unwrap();
-    stdout.flush().unwrap();
-
-    let _ = stdin.read(&mut [0u8]).unwrap();
-    exit(code);
+fn http_client() -> reqwest::Result<Client> {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(20))
+        .build()
 }
 
 fn get_process_bar(count: usize) -> impl BarExt {
@@ -154,75 +130,104 @@ fn show_visual_alert(course_code: &str) {
     println!("{}", "/".repeat(50));
 }
 
-/// 讀取使用者輸入
+// One reader owns stdin for the lifetime of the process, including between menus.
+fn input_receiver() -> &'static Mutex<mpsc::Receiver<io::Result<String>>> {
+    static INPUT: OnceLock<Mutex<mpsc::Receiver<io::Result<String>>>> = OnceLock::new();
+    INPUT.get_or_init(|| {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for line in io::stdin().lock().lines() {
+                let failed = line.is_err();
+                if tx.send(line).is_err() || failed {
+                    break;
+                }
+            }
+        });
+        Mutex::new(rx)
+    })
+}
+
 fn read_input(prompt: &str) -> String {
     print!("{}", prompt);
     io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
-}
-
-/// 根據學號生成 ntfy topic (學號_SHA256後6位)
-fn generate_ntfy_topic(student_id: &str) -> String {
-    // 獲取機器唯一識別碼作為 salt（不需要 UAC 或 root 權限）
-    // 使用 HWIDComponent 添加硬體資訊
-    use machineid_rs::{Encryption, HWIDComponent, IdBuilder};
-
-    let machine_id = IdBuilder::new(Encryption::SHA256)
-        .add_component(HWIDComponent::SystemID)
-        .build("ntfy-topic")
-        .unwrap_or_else(|_| "default-machine-id".to_string());
-
-    // 使用學號 + 機器 ID 作為 salt 進行 SHA-256 加密
-    let combined = format!("{}{}", student_id, machine_id);
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let result = hasher.finalize();
-    let hash = format!("{:x}", result);
-    let last_6 = &hash[hash.len() - 6..];
-
-    format!("{}_{}", student_id, last_6)
-}
-
-/// 獲取學號輸入並保存
-fn get_student_id_input() -> String {
-    loop {
-        let input = read_input("\n請輸入您的學號（用於接收課程空缺通知）: ");
-        if input.is_empty() {
-            println!("❌ 學號不能為空");
-            continue;
+    match input_receiver().lock().unwrap().recv() {
+        Ok(Ok(line)) => line.trim().to_string(),
+        Ok(Err(e)) => {
+            eprintln!("讀取輸入失敗: {e}");
+            exit(1);
         }
-        if input.chars().all(|c| c.is_alphanumeric()) {
-            let topic = generate_ntfy_topic(&input);
-            println!("✓ 學號已設定: {}", input);
-            println!("📱 請在手機 ntfy app 中訂閱以下 topic:");
-            println!("   {}", topic);
-            println!(
-                "   (這個 topic 是由您的學號 + 本機硬體資訊加密生成，確保只有您在這台電腦上能產生相同 topic)"
-            );
-
-            // 保存學號到設定檔
-            let mut config = load_config();
-            config.student_id = Some(input.clone());
-            save_config(&config);
-
-            return input;
-        } else {
-            println!("❌ 學號只能包含字母和數字");
-        }
+        Err(_) => exit(0),
     }
 }
 
-/// 發送 ntfy.sh 通知
-async fn send_ntfy_notification(
+async fn wait_for_quit(receiver: &Mutex<mpsc::Receiver<io::Result<String>>>) {
+    loop {
+        match receiver.lock().unwrap().try_recv() {
+            Ok(Ok(line)) if line.trim().eq_ignore_ascii_case("q") => return,
+            Ok(Err(e)) => {
+                eprintln!("讀取輸入失敗: {e}");
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => return,
+            _ => {}
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn ensure_ntfy_topic(config: &mut AppConfig) -> &str {
+    config.ntfy_topic.get_or_insert_with(|| {
+        let bytes: [u8; 32] = rand::rng().random();
+        format!(
+            "course-{}",
+            bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        )
+    })
+}
+
+async fn send_vacancy_notification(
     client: &Client,
-    student_id: &str,
+    base_url: &str,
+    topic: &str,
+    title: &str,
+    message: &str,
+    state: &mut CourseVacancyState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_notification_to(client, base_url, topic, title, message, 4).await?;
+    state.notification_count += 1;
+    state.last_notification_time = Some(Instant::now());
+    Ok(())
+}
+
+impl CourseVacancyState {
+    fn should_notify(&self, now: Instant) -> bool {
+        self.notification_count < 12
+            && self
+                .last_notification_time
+                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(300))
+    }
+}
+
+async fn until_quit(
+    receiver: &Mutex<mpsc::Receiver<io::Result<String>>>,
+    work: impl std::future::Future<Output = ()>,
+) {
+    tokio::select! {
+        biased;
+        _ = wait_for_quit(receiver) => {}
+        _ = work => {}
+    }
+}
+
+async fn send_notification_to(
+    client: &Client,
+    base_url: &str,
+    topic: &str,
     title: &str,
     message: &str,
     priority: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let url = format!("https://ntfy.sh/{}", student_id);
+    let url = format!("{}/{}", base_url.trim_end_matches('/'), topic);
 
     let response = client
         .post(&url)
@@ -313,7 +318,7 @@ async fn get_course_info_with_retry(
     client: &Client,
     semester: &str,
     course_id: &str,
-    max_retries: u32,
+    max_attempts: u32,
 ) -> Result<Course, String> {
     let mut retries = 0;
 
@@ -322,8 +327,8 @@ async fn get_course_info_with_retry(
             Ok(course) => return Ok(course),
             Err(e) => {
                 retries += 1;
-                if retries >= max_retries {
-                    return Err(format!("查詢失敗（已重試 {} 次）: {}", max_retries, e));
+                if retries >= max_attempts {
+                    return Err(format!("查詢失敗（共嘗試 {} 次）: {}", max_attempts, e));
                 }
 
                 // 指數退避重試
@@ -333,7 +338,7 @@ async fn get_course_info_with_retry(
                     course_id,
                     wait_time.as_secs(),
                     retries,
-                    max_retries
+                    max_attempts
                 );
                 sleep(wait_time).await;
             }
@@ -341,128 +346,54 @@ async fn get_course_info_with_retry(
     }
 }
 
-/// 帶倒數計時的等待函數，檢查共享的退出信號
-async fn countdown_with_quit_option(duration: Duration, quit_signal: &Arc<AtomicBool>) -> bool {
-    let total_millis = duration.as_millis() as u64;
-    let steps = (total_millis / 100).max(1); // 每0.1秒更新一次
-
-    // 倒數循環
-    for i in 0..steps {
-        if quit_signal.load(Ordering::Relaxed) {
-            println!(); // 換行
-            return false; // 用戶按了Q
-        }
-
-        let remaining = (steps - i) as f64 * 0.1;
-        print!(
-            "\r倒數計時: {:.1} 秒 | 輸入 Q 然後按 Enter 結束監測",
-            remaining
-        );
-        io::stdout().flush().unwrap();
-
-        sleep(Duration::from_millis(100)).await;
+/// Configure monitoring before polling; configuration failures stop the operation.
+async fn monitor_courses() -> anyhow::Result<()> {
+    let client = http_client()?;
+    let semester = get_semester(&client).await?;
+    println!("\n當前學期: {semester}");
+    let path = get_config_path()?;
+    let mut config = load_config_from(&path)?;
+    let migrated = config.ntfy_topic.is_none();
+    let topic = ensure_ntfy_topic(&mut config).to_string();
+    save_config_to(&path, &config)?;
+    if migrated {
+        println!("通知頻道已升級，請在 ntfy app 重新訂閱下方頻道。");
     }
+    println!("ntfy topic: {topic}\n請勿公開此頻道；它不是加密或身分驗證。");
 
-    println!(); // 換行
-    true // 正常完成倒數
-}
-
-/// 課程監測功能
-async fn monitor_courses() -> bool {
-    let client = Client::new();
-
-    // 取得學期資訊
-    let semester = match get_semester(&client).await {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("❌ 無法取得學期資訊: {}", e);
-            return false;
-        }
-    };
-
-    println!("\n當前學期: {}", semester);
-
-    // 讀取設定檔
-    let config = load_config();
-
-    // 讀取上次的學號（如果存在）
-    let student_id = if let Some(last_id) = config.student_id.as_ref() {
-        if !last_id.is_empty() {
-            let topic = generate_ntfy_topic(last_id);
-            println!("\n上次使用的學號: {}", last_id);
-            println!("對應的 ntfy topic: {}", topic);
-            let use_last = read_input("是否沿用上次的學號？(Y/n): ");
-            if use_last.is_empty()
-                || use_last.to_lowercase() == "y"
-                || use_last.to_lowercase() == "yes"
-            {
-                last_id.to_string()
+    loop {
+        let input = if let Some(previous) = config.last_courses.as_ref() {
+            println!("上次查詢的課程清單: {previous}");
+            if confirms_default(&read_input("是否沿用上次的課程清單？(Y/n): ")) {
+                previous.clone()
             } else {
-                get_student_id_input()
+                read_input("請輸入課程代碼（逗號分隔）: ")
             }
         } else {
-            get_student_id_input()
-        }
-    } else {
-        get_student_id_input()
-    };
-
-    // 生成 ntfy topic
-    let ntfy_topic = generate_ntfy_topic(&student_id);
-
-    // 讀取上次的課程清單（如果存在）
-    if let Some(last_courses) = config.last_courses.as_ref()
-        && !last_courses.is_empty()
-    {
-        println!("\n上次查詢的課程清單: {}", last_courses);
-        let use_last = read_input("是否沿用上次的課程清單？(Y/n): ");
-        if use_last.is_empty() || use_last.to_lowercase() == "y" || use_last.to_lowercase() == "yes"
-        {
-            let course_codes = parse_course_codes(last_courses);
-            return start_monitoring(&client, &semester, course_codes, &ntfy_topic).await;
-        }
-    }
-
-    // 輸入課程代碼
-    loop {
-        let input = read_input("\n請輸入要監測的課程代碼（多個代碼以逗號分隔）: ");
-
-        if input.is_empty() {
-            println!("❌ 請至少輸入一個課程代碼");
-            continue;
-        }
-
-        let course_codes = parse_course_codes(&input);
-
-        // 驗證所有課程代碼
-        let mut all_valid = true;
-        let mut invalid_codes = Vec::new();
-
-        for code in &course_codes {
-            if !validate_course_code(code) {
-                all_valid = false;
-                invalid_codes.push(code.clone());
-            }
-        }
-
-        if !all_valid {
-            println!("❌ 以下課程代碼格式無效: {:?}", invalid_codes);
-            println!("💡 課程代碼應為 9 位字元，例如: CS1001301");
-            let retry = read_input("是否重新輸入？(Y/n): ");
-            if retry.is_empty() || retry.to_lowercase() == "y" || retry.to_lowercase() == "yes" {
+            read_input("請輸入課程代碼（逗號分隔）: ")
+        };
+        let codes = parse_course_codes(&input);
+        let invalid: Vec<_> = codes
+            .iter()
+            .filter(|code| !validate_course_code(code))
+            .collect();
+        if codes.is_empty() || !invalid.is_empty() {
+            println!("請輸入有效課程代碼，例如 CS1001301。無效代碼: {invalid:?}");
+            config.last_courses = None;
+            if confirms_default(&read_input("是否重新輸入？(Y/n): ")) {
                 continue;
-            } else {
-                return false; // 返回主選單
             }
+            return Ok(());
         }
-
-        // 儲存課程清單到設定檔
-        let mut config = load_config();
-        config.last_courses = Some(input.clone());
-        save_config(&config);
-
-        return start_monitoring(&client, &semester, course_codes, &ntfy_topic).await;
+        config.last_courses = Some(codes.join(","));
+        save_config_to(&path, &config)?;
+        start_monitoring(&client, &semester, codes, &topic).await;
+        return Ok(());
     }
+}
+
+fn confirms_default(input: &str) -> bool {
+    input.is_empty() || input.eq_ignore_ascii_case("y") || input.eq_ignore_ascii_case("yes")
 }
 
 /// 解析時間間隔輸入（支持h=小時, m=分鐘）
@@ -478,14 +409,14 @@ fn parse_time_interval(input: &str) -> Option<u64> {
             current_number.push(ch);
         } else if ch == 'h' {
             if let Ok(hours) = current_number.parse::<u64>() {
-                total_seconds += hours * 3600;
+                total_seconds = total_seconds.checked_add(hours.checked_mul(3600)?)?;
                 current_number.clear();
             } else {
                 return None;
             }
         } else if ch == 'm' {
             if let Ok(minutes) = current_number.parse::<u64>() {
-                total_seconds += minutes * 60;
+                total_seconds = total_seconds.checked_add(minutes.checked_mul(60)?)?;
                 current_number.clear();
             } else {
                 return None;
@@ -498,7 +429,7 @@ fn parse_time_interval(input: &str) -> Option<u64> {
     // 處理剩餘的數字（視為秒數）
     if !current_number.is_empty() {
         if let Ok(seconds) = current_number.parse::<u64>() {
-            total_seconds += seconds;
+            total_seconds = total_seconds.checked_add(seconds)?;
         } else {
             return None;
         }
@@ -517,7 +448,7 @@ async fn start_monitoring(
     semester: &str,
     course_codes: Vec<String>,
     ntfy_topic: &str,
-) -> bool {
+) {
     // 詢問查詢間隔
     let interval = loop {
         let input = read_input(
@@ -545,49 +476,41 @@ async fn start_monitoring(
     println!("查詢間隔: {} 秒（含隨機延遲 ±2 秒）", interval);
     println!("通知設定: 發現空缺後每 5 分鐘通知一次，最多 12 次");
     println!("通知 Topic: {}", ntfy_topic);
-    println!("提示: 等待期間輸入 Q 然後按 Enter 可結束監測");
+    println!("提示: 隨時輸入 Q 然後按 Enter 可結束監測");
     println!("========================================\n");
 
     // 初始化課程狀態追蹤
     let mut course_states: HashMap<String, CourseVacancyState> = HashMap::new();
     for code in &course_codes {
-        course_states.insert(
-            code.clone(),
-            CourseVacancyState {
-                had_vacancy: false,
-                notification_count: 0,
-                last_notification_time: None,
-            },
-        );
+        course_states.insert(code.clone(), CourseVacancyState::default());
     }
 
-    // 創建共享的退出信號
-    let quit_signal = Arc::new(AtomicBool::new(false));
-    let quit_signal_clone = quit_signal.clone();
+    until_quit(
+        input_receiver(),
+        poll_courses(
+            client,
+            semester,
+            &course_codes,
+            ntfy_topic,
+            interval,
+            &mut course_states,
+        ),
+    )
+    .await;
+    println!("\n✓ 已停止監測，返回主選單...");
+}
 
-    // 啟動單一的鍵盤監聽執行緒，在整個監測期間持續運行
-    let input_thread = thread::spawn(move || {
-        let stdin = io::stdin();
-        loop {
-            let mut buffer = String::new();
-            if stdin.read_line(&mut buffer).is_ok() {
-                let input = buffer.trim().to_lowercase();
-                if input == "q" {
-                    quit_signal_clone.store(true, Ordering::Relaxed);
-                    break; // 退出輸入監聽迴圈
-                }
-            }
-        }
-    });
-
+async fn poll_courses(
+    client: &Client,
+    semester: &str,
+    course_codes: &[String],
+    ntfy_topic: &str,
+    interval: u64,
+    course_states: &mut HashMap<String, CourseVacancyState>,
+) {
     let mut iteration = 0;
 
     loop {
-        // 檢查是否在查詢前就收到退出信號
-        if quit_signal.load(Ordering::Relaxed) {
-            break;
-        }
-
         iteration += 1;
         println!(
             "\n[第 {} 次查詢] {}",
@@ -596,11 +519,14 @@ async fn start_monitoring(
         );
         println!("{}", "-".repeat(80));
 
-        for course_code in &course_codes {
+        for course_code in course_codes {
             match get_course_info_with_retry(client, semester, course_code, 3).await {
                 Ok(course) => {
                     let current_students: i32 = course.student_count;
-                    let limit: i32 = course.student_limit.parse().unwrap_or(0);
+                    let Ok(limit) = course.student_limit.parse::<i32>() else {
+                        eprintln!("{course_code} | 人數上限格式錯誤，略過本次查詢");
+                        continue;
+                    };
                     let has_vacancy = current_students < limit;
                     let vacancy_symbol = if has_vacancy {
                         "✅ 有空缺"
@@ -626,24 +552,7 @@ async fn start_monitoring(
                         play_beep();
 
                         // 檢查是否需要發送 ntfy 通知
-                        let should_notify = if !state.had_vacancy {
-                            // 剛發現空缺，立即通知
-                            true
-                        } else if state.notification_count < 12 {
-                            // 已經有空缺，檢查是否過了 5 分鐘
-                            if let Some(last_time) = state.last_notification_time {
-                                now.duration_since(last_time) >= Duration::from_secs(300) // 5 分鐘
-                            } else {
-                                true
-                            }
-                        } else {
-                            false
-                        };
-
-                        if should_notify {
-                            state.notification_count += 1;
-                            state.last_notification_time = Some(now);
-
+                        if state.should_notify(now) {
                             let title = format!("🎓 {} 有空缺！", course_code);
                             let message = format!(
                                 "課程名稱: {}\n上課時間: {}\n選課人數: {}/{}\n\n通知次數: {}/12",
@@ -651,11 +560,18 @@ async fn start_monitoring(
                                 course.node,
                                 current_students,
                                 limit,
-                                state.notification_count
+                                state.notification_count + 1
                             );
 
-                            match send_ntfy_notification(client, ntfy_topic, &title, &message, 4)
-                                .await
+                            match send_vacancy_notification(
+                                client,
+                                "https://ntfy.sh",
+                                ntfy_topic,
+                                &title,
+                                &message,
+                                state,
+                            )
+                            .await
                             {
                                 Ok(_) => {
                                     println!("  📱 已發送通知 ({}/12)", state.notification_count)
@@ -675,8 +591,15 @@ async fn start_monitoring(
                                 course.course_name, course.node, current_students, limit
                             );
 
-                            match send_ntfy_notification(client, ntfy_topic, &title, &message, 3)
-                                .await
+                            match send_notification_to(
+                                client,
+                                "https://ntfy.sh",
+                                ntfy_topic,
+                                &title,
+                                &message,
+                                3,
+                            )
+                            .await
                             {
                                 Ok(_) => println!("  📱 已發送『課程已滿』通知"),
                                 Err(e) => eprintln!("  ⚠️  通知發送失敗: {}", e),
@@ -697,43 +620,35 @@ async fn start_monitoring(
 
         // 隨機延遲（模擬真人行為）
         let mut rng = rand::rng();
-        let jitter: f64 = rng.random_range(-2.0..3.0);
-        let wait_time = interval as f64 + jitter;
-        let wait_duration = Duration::from_secs_f64(wait_time.max(1.0));
+        let jitter: f64 = rng.random_range(-2.0..=2.0);
+        let wait_time = (interval as f64 + jitter).max(1.0);
+        let wait_duration = Duration::from_secs_f64(wait_time);
 
         println!("\n等待 {:.1} 秒後進行下次查詢...", wait_time);
 
-        // 帶倒數計時的等待，檢查退出信號
-        if !countdown_with_quit_option(wait_duration, &quit_signal).await {
-            break;
-        }
+        wait_interval(wait_duration).await;
     }
+}
 
-    // 等待輸入執行緒結束（最多等待1秒）
-    // 由於執行緒可能還在 read_line 阻塞中，我們不強制等待它完成
-    drop(input_thread);
-
-    println!("\n✓ 已停止監測，返回主選單...");
-    false // 返回false表示用戶主動退出或結束
+async fn wait_interval(duration: Duration) {
+    let start = Instant::now();
+    while let Some(remaining) = duration.checked_sub(start.elapsed()) {
+        print!(
+            "\r倒數計時: {:.1} 秒 | 輸入 Q 然後按 Enter 結束監測",
+            remaining.as_secs_f64()
+        );
+        io::stdout().flush().unwrap();
+        sleep(remaining.min(Duration::from_millis(100))).await;
+    }
+    println!();
 }
 
 /// 原始選課分析功能
-async fn run_original_analysis(file_path: String) -> bool {
-    let file_content = std::fs::read_to_string(&file_path).unwrap_or_else(|_| {
-        eprintln!("❌ 檔案開啟失敗: {}", file_path);
-        wait_exit_with_code(1);
-        String::new()
-    });
-
-    let course_ids: Vec<_> = extract_course_ids(&file_content);
-
-    let client = Client::new();
-
-    let semester = get_semester(&client).await.unwrap_or_else(|_| {
-        eprintln!("❌ 無法取得學期資訊");
-        wait_exit_with_code(1);
-        String::new()
-    });
+async fn run_original_analysis(file_path: String) -> anyhow::Result<()> {
+    let file_content = std::fs::read_to_string(&file_path)?;
+    let course_ids = extract_course_ids(&file_content);
+    let client = http_client()?;
+    let semester = get_semester(&client).await?;
 
     let need_identity_extraction = course_ids.iter().any(|id| id.starts_with("PE"));
     // Try to extract student identity from the HTML file for enhanced PE course calculations
@@ -804,11 +719,12 @@ async fn run_original_analysis(file_path: String) -> bool {
 
     // 等待用戶按Enter後返回主選單
     let _ = read_input("\n按 Enter 鍵返回主選單...");
-    true // 返回主選單
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
     // 主循環：不斷顯示選單直到用戶選擇退出
     loop {
         let choice = show_main_menu();
@@ -820,7 +736,7 @@ async fn main() {
             }
             1 => {
                 // 原始選課分析功能
-                let file_path = match get_path() {
+                let file_path = match args.file_path.clone() {
                     Some(path) => path,
                     None => {
                         let path = read_input("\n請輸入 HTML 檔案路徑: ");
@@ -832,12 +748,16 @@ async fn main() {
                     }
                 };
 
-                run_original_analysis(file_path).await;
+                if let Err(e) = run_original_analysis(file_path).await {
+                    eprintln!("分析失敗: {e}");
+                }
                 // 執行完畢後會自動返回主選單
             }
             2 => {
                 // 課程監測功能
-                monitor_courses().await;
+                if let Err(e) = monitor_courses().await {
+                    eprintln!("監測失敗: {e}");
+                }
                 // 執行完畢後會自動返回主選單
             }
             _ => {

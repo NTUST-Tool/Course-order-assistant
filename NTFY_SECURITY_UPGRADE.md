@@ -1,107 +1,22 @@
-# ntfy.sh 通知系統升級說明
+# Notification topic migration
 
-## 🔐 安全性提升
+Notifications now use a randomly generated 256-bit topic, stored in `course_assistant_config.json` beside the executable. Student IDs and hardware identifiers are no longer required.
 
-### Topic 加密
-- **舊方式**：直接使用學號作為 topic (例如：`B11012345`)
-- **新方式**：學號 + MD5後4位 (例如：`B11012345_a3f9`)
+## Upgrade
 
-### 為什麼這樣做？
-✅ **防止他人亂訂閱**：即使別人知道你的學號，也無法訂閱你的通知  
-✅ **隱私保護**：Topic 不會直接暴露完整學號  
-✅ **唯一性**：每個學號對應唯一的加密 topic
+1. Start monitoring. A legacy configuration without a random topic is migrated and saved.
+2. Subscribe to the newly displayed topic in the ntfy app. The previous topic will no longer receive this application's notifications.
+3. Keep the configuration file to retain the same topic across restarts. Moving the executable without its configuration creates a different topic.
+4. If configuration loading or saving fails, resolve the reported error before monitoring can start. Do not delete a damaged configuration without first making a private backup.
 
-## 💾 學號記憶功能
+## Privacy limits
 
-### 首次使用
-```bash
-請輸入您的學號（用於接收課程空缺通知）: B11012345
-✓ 學號已設定: B11012345
-📱 請在手機 ntfy app 中訂閱以下 topic:
-   B11012345_a3f9
-   (這個 topic 是由您的學號加密生成，確保隱私安全)
-```
+The topic has the form `course-` followed by 64 random hexadecimal characters. Keep it and the configuration private. Unix configuration files are restricted to the owner; on Windows, access follows the containing directory's permissions.
 
-### 再次使用
-```bash
-上次使用的學號: B11012345
-對應的 ntfy topic: B11012345_a3f9
-是否沿用上次的學號？(Y/n): y
-```
+A random topic is difficult to guess, but it is not encryption or authentication. Anyone who obtains the topic may be able to subscribe or publish. The ntfy service receives notification content; do not include sensitive information. Older MD5/SHA-256 and hardware-binding security claims are obsolete.
 
-### 切換學號
-```bash
-上次使用的學號: B11012345
-對應的 ntfy topic: B11012345_a3f9
-是否沿用上次的學號？(Y/n): n
+## Delivery and verification
 
-請輸入您的學號（用於接收課程空缺通知）: B11112222
-✓ 學號已設定: B11112222
-📱 請在手機 ntfy app 中訂閱以下 topic:
-   B11112222_f1e4
-```
+Only successful vacancy notifications count toward the 12-notification limit and five-minute spacing. Failed deliveries are retried on a subsequent polling cycle. Q followed by Enter cancels monitoring even during a request or retry; EOF exits cleanly.
 
-## 📱 手機設置步驟
-
-1. **下載 ntfy app**
-   - Android: Google Play Store
-   - iOS: App Store
-
-2. **訂閱您的專屬 topic**
-   - 打開 ntfy app
-   - 點擊「+」添加訂閱
-   - 輸入程式顯示的 topic（例如：`B11012345_a3f9`）
-   - 完成！
-
-3. **測試通知**
-   - 開始監測課程
-   - 當有空缺時會自動推送通知到手機
-
-## 🗂️ 資料儲存
-
-程式會在執行目錄創建以下文件：
-- `last_student_id.txt` - 儲存上次使用的學號
-- `last_courses.txt` - 儲存上次監測的課程清單
-
-這些文件讓您下次使用時更方便！
-
-## 🔄 完整使用流程
-
-```bash
-# 第一次使用
-./Course-order-assistant
-選擇功能: 2 (監測)
-輸入學號: B11012345
-→ 顯示 topic: B11012345_a3f9
-→ 在手機訂閱此 topic
-輸入課程: CS1001301
-→ 開始監測
-
-# 第二次使用
-./Course-order-assistant
-選擇功能: 2 (監測)
-沿用學號: y
-沿用課程: y
-→ 直接開始監測
-```
-
-## 🛡️ 安全說明
-
-### Topic 生成算法
-```
-學號: B11012345
-MD5: a3f9b2c1d4e5f6g7h8i9j0k1l2m3n4o5
-取後4位: a3f9
-最終 topic: B11012345_a3f9
-```
-
-### 為什麼安全？
-- ❌ 別人隨便猜測學號 → **無法訂閱**（不知道 MD5 後綴）
-- ❌ 別人輸入錯誤學號 → **訂閱到錯誤 topic**（收不到你的通知）
-- ✅ 只有正確的學號 → **產生正確的 topic**
-
----
-
-**更新日期**: 2025-12-24  
-**版本**: 1.5.0  
-**新增**: 學號加密 topic + 學號記憶功能
+Local tests inspect real outgoing notification headers and text using a loopback server and cover failed delivery accounting. They never send notifications to a public topic. Live phone delivery requires an approved destination and is not established by those tests.
