@@ -1,5 +1,6 @@
 name: "CI"
 on:
+  workflow_dispatch:
   push:
     paths:
       - "src/**"
@@ -21,7 +22,9 @@ on:
     branches:
       - "rust"
 
-    
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -44,15 +47,33 @@ jobs:
         with:
           target: x86_64-unknown-linux-musl
 
+      - name: test dependencies and course parsing
+        run: cargo test --locked
+
       - name: build on non-Linux
         if: matrix.os != 'ubuntu-latest'
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: build on Linux
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt install -y musl-tools
-          cargo build --release --target x86_64-unknown-linux-musl
+          cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Smoke test executable
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            binary=target/x86_64-unknown-linux-musl/release/Course-order-assistant
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            binary=target/release/Course-order-assistant.exe
+          else
+            binary=target/release/Course-order-assistant
+          fi
+          "$binary" --help
+          printf '%s\n' 0 | "$binary"
+          "$binary" < /dev/null
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -62,79 +83,3 @@ jobs:
             target/x86_64-unknown-linux-musl/release/Course-order-assistant
             target/release/Course-order-assistant
             target/release/Course-order-assistant.exe
-
-  update-release:
-    name: Update Latest Release
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    permissions:
-      contents: write
-    steps:
-      - name: Get latest release
-        id: get_latest_release
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const releases = await github.rest.repos.listReleases({ owner, repo });
-            if (releases.data.length === 0) {
-              core.setFailed('No releases found to update.');
-              return;
-            }
-            const latestRelease = releases.data[0];
-            core.setOutput('release_id', latestRelease.id);
-            core.setOutput('upload_url', latestRelease.upload_url);
-            core.setOutput('release_tag', latestRelease.tag_name)
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-
-      - name: prepare macos-latest arifacts
-        run: |
-          mv macos-latest-Build/release/Course-order-assistant ./Course-order-assistant
-          chmod +x Course-order-assistant
-          zip Course-order-assistant-macos-arm64.zip Course-order-assistant
-
-      - name: prepare linux arifacts
-        run: |
-          mv ubuntu-latest-Build/x86_64-unknown-linux-musl/release/Course-order-assistant ./Course-order-assistant
-          chmod +x Course-order-assistant
-          zip Course-order-assistant-linux.zip Course-order-assistant
-
-      - name: prepare windows arifacts
-        run: |
-          mv windows-latest-Build/release/Course-order-assistant.exe ./Course-order-assistant.exe
-
-      - name: Display structure of downloaded files
-        run: ls -R
-
-      - name: Delete existing release assets
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const release_id = ${{ steps.get_latest_release.outputs.release_id }};
-            const assets = await github.rest.repos.listReleaseAssets({
-                owner,
-                repo,
-                release_id
-            });
-            for (const asset of assets.data) {
-                console.log(`Deleting asset ${asset.name}`);
-                await github.rest.repos.deleteReleaseAsset({
-                    owner,
-                    repo,
-                    asset_id: asset.id
-                });
-            }
-
-      - name: Upload Release Asset macos-latest
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.get_latest_release.outputs.release_tag }}
-          files: |
-            Course-order-assistant-macos-arm64.zip
-            Course-order-assistant-macos-amd64.zip
-            Course-order-assistant-linux.zip
-            Course-order-assistant.exe

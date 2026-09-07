@@ -43,22 +43,28 @@ pub async fn get_course_info(
         "CourseNo": course_id,
         "Language": "zh"
     });
-    let res = client.post(url).json(&body).send().await?;
+    let res = client
+        .post(url)
+        .json(&body)
+        .send()
+        .await?
+        .error_for_status()?;
     let json_array = res.json::<Value>().await?;
-    if json_array.as_array().unwrap().is_empty() {
+    let rows = json_array
+        .as_array()
+        .ok_or_else(|| anyhow!("課程資料格式錯誤"))?;
+    if rows.is_empty() {
         return Err(anyhow!(course_id.to_string()));
     }
     let json_object = &json_array[0];
     let mut data = from_value::<Course>(json_object.clone())?;
-    //    .wrap_or_exit("不可能，絕對不可能，怎麼可能沒有課程資料");
-    if json_array.as_array().unwrap().len() > 1 {
-        for item in json_array.as_array().unwrap().iter().skip(1) {
+    if rows.len() > 1 {
+        for item in rows.iter().skip(1) {
             let extra: Course = from_value(item.clone())?;
             data.node = format!("{},{}", data.node, extra.node);
         }
     }
     let raw_choice_rate = (data.student_count as f32) / (data.student_limit).parse::<f32>()?;
-    //      .wrap_or_exit("人數上限轉換失敗");
 
     data.choice_rate = round_digits(raw_choice_rate, 2);
     data.success_rate = if data.choice_rate > 0.0 {
@@ -110,9 +116,18 @@ pub async fn get_course_info(
 
 pub async fn get_semester(client: &Client) -> Result<String> {
     let url = "https://querycourse.ntust.edu.tw/querycourse/api/semestersinfo";
-    let data = client.get(url).send().await?.json::<Value>().await?;
-    let body = data[0]["Semester"].as_str().unwrap_or_default().to_string();
-    Ok(body)
+    let data = client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Value>()
+        .await?;
+    data[0]["Semester"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("學期資料為空或格式錯誤"))
 }
 /// Get enrollment limit information for courses
 /// Used for probability and ratio calculation of physical education courses
@@ -152,14 +167,10 @@ pub async fn fetch_all_courses(
 
         futures.push(async move { get_course_info(&client, &semester, course_id, identity).await });
     }
-    let mut what = callback;
+    let mut callback = callback;
 
     while let Some(result) = futures.next().await {
-        what();
-        if let Err(err) = result {
-            unknown_courses.push(err.to_string());
-            continue;
-        }
+        callback();
         match result {
             Ok(course_info) => {
                 if course_info.success_rate == 100.0 {
@@ -371,7 +382,7 @@ pub fn extract_student_identity(html_content: &str) -> Result<StudentIdentity> {
         };
 
         // Validate grade position constraints
-        if grade_pos < 2 || grade_pos >= parts.len() {
+        if grade_pos < 2 {
             continue;
         }
 
