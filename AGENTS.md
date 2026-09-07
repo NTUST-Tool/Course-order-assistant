@@ -35,7 +35,10 @@ Preserve both analysis and monitoring.
 - Linux x86_64 musl (Rust 1.96): release build, tests, menu/EOF/help smoke tests, and live school API checks pass using the upstream publication target.
 - Remote verification uses isolated scratch directories and does not deploy services or publish release assets.
 
-## CI and release caution
+## CI and releases
 
-CI builds macOS, Windows and Linux musl. A push to `rust` also replaces existing assets on the repository's latest release; pull-request runs do not publish releases.
-Confirm that release side effect before pushing. Never commit student configuration, credentials, runtime files or target outputs.
+CI runs tests, release builds and executable smoke tests on macOS, Windows and Linux musl. Pushes to `rust`, pull requests and manual workflow runs only upload build artifacts; they never create releases or alter existing release assets. Workflow permissions are read-only.
+
+Publishing is a separate explicit action: select a successful CI run for the exact commit, download and verify its artifacts, choose an unused version tag, and create a new release with those files. Prefer a draft for verification before publication. Never overwrite an existing version's assets or move its tag. See docs/releasing.md.
+
+Never commit student configuration, credentials, runtime files or build outputs.
