@@ -1,7 +1,14 @@
 # Course Order Assistant
 
 Rust CLI for NTUST course-choice analysis and vacancy monitoring with ntfy notifications.
-The `rust` branch is the source of upstream PR #226. Preserve both analysis and monitoring.
+Preserve both analysis and monitoring.
+
+## Documentation
+
+- README.md retains the upstream project introduction, analysis tutorial, official downloads, issue tracker and Star History. Keep monitoring details in docs/monitoring.md and link to it from the README.
+- The monitoring guide is the single source for setup, delivery rules, privacy, test-version migration and verification commands. Do not reintroduce duplicate backup READMEs or obsolete feature/release notes.
+- Use official repository release links and actual published assets. Do not substitute fork downloads, invent release versions or claim mobile delivery based only on server-side tests.
+- Preserve upstream tutorial images. Unreferenced fork screenshots have not been removed or adopted as current monitoring instructions.
 
 ## Dependencies and verification
 
@@ -30,5 +37,5 @@ The `rust` branch is the source of upstream PR #226. Preserve both analysis and 
 
 ## CI and release caution
 
-CI builds macOS, Windows and Linux musl. A push to `rust` also replaces existing assets on the latest fork release.
+CI builds macOS, Windows and Linux musl. A push to `rust` also replaces existing assets on the repository's latest release; pull-request runs do not publish releases.
 Confirm that release side effect before pushing. Never commit student configuration, credentials, runtime files or target outputs.
