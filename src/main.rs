@@ -23,6 +23,8 @@ use tabled::{
 };
 use tokio::time::sleep;
 pub mod core;
+#[cfg(test)]
+mod dependency_tests;
 pub mod model;
 use core::{
     extract_course_ids, extract_student_identity, fetch_all_courses, get_course_info, get_semester,
